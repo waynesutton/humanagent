@@ -17,7 +17,6 @@ Every human gets an agent. Personal AI agent with skill file, MCP server, API, e
 
 - **Frontend:** React + Vite + TypeScript + Tailwind CSS
 - **Backend:** Convex (real-time, fully typed)
-- **Auth:** @robelest/convex-auth (OAuth, passkeys, magic links, admin portal)
 - **LLM:** OpenRouter (400+ models) + BYOK + free/OSS models
 - **Email:** AgentMail API
 - **Protocols:** MCP, A2A, WebMCP
@@ -32,7 +31,7 @@ npm install
 npx convex dev
 
 # Set up auth (generates JWT keys, configures OAuth)
-npx @robelest/convex-auth --site-url "http://localhost:5173"
+
 
 # Set environment variables in Convex dashboard:
 # AUTH_GITHUB_ID, AUTH_GITHUB_SECRET
@@ -106,20 +105,21 @@ Seven-layer security architecture. See the PRD for full details.
 
 Set these in your Convex dashboard (Settings > Environment Variables):
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `AUTH_GITHUB_ID` | Yes | GitHub OAuth app ID |
-| `AUTH_GITHUB_SECRET` | Yes | GitHub OAuth app secret |
-| `AUTH_GOOGLE_ID` | Yes | Google OAuth client ID |
-| `AUTH_GOOGLE_SECRET` | Yes | Google OAuth client secret |
-| `OPENROUTER_API_KEY` | Yes | Platform default LLM key |
-| `AGENTMAIL_API_KEY` | Phase 1 | AgentMail API key |
-| `AGENTMAIL_WEBHOOK_SECRET` | Phase 1 | Webhook signature secret |
-| `TWILIO_ACCOUNT_SID` | Phase 2 | Twilio account SID |
-| `TWILIO_AUTH_TOKEN` | Phase 2 | Twilio auth token |
-| `RESEND_API_KEY` | Phase 2 | Resend transactional email |
+| Variable                   | Required | Description                |
+| -------------------------- | -------- | -------------------------- |
+| `AUTH_GITHUB_ID`           | Yes      | GitHub OAuth app ID        |
+| `AUTH_GITHUB_SECRET`       | Yes      | GitHub OAuth app secret    |
+| `AUTH_GOOGLE_ID`           | Yes      | Google OAuth client ID     |
+| `AUTH_GOOGLE_SECRET`       | Yes      | Google OAuth client secret |
+| `OPENROUTER_API_KEY`       | Yes      | Platform default LLM key   |
+| `AGENTMAIL_API_KEY`        | Phase 1  | AgentMail API key          |
+| `AGENTMAIL_WEBHOOK_SECRET` | Phase 1  | Webhook signature secret   |
+| `TWILIO_ACCOUNT_SID`       | Phase 2  | Twilio account SID         |
+| `TWILIO_AUTH_TOKEN`        | Phase 2  | Twilio auth token          |
+| `RESEND_API_KEY`           | Phase 2  | Resend transactional email |
 
 ## License
 
 MIT
+
 # humanagent

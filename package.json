@@ -1,0 +1,53 @@
+{
+  "name": "humanagent",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Every human gets an agent. Personal AI agent with skill file, MCP server, API, email, and phone.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:convex": "convex dev",
+    "dev:all": "concurrently \"npm:dev\" \"npm:dev:convex\"",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "deploy": "convex deploy --cmd 'npm run build'",
+    "auth:setup": "npx @robelest/convex-auth --site-url http://localhost:5173",
+    "auth:portal:upload": "npx @robelest/convex-auth portal upload",
+    "auth:portal:link": "npx @robelest/convex-auth portal link"
+  },
+  "dependencies": {
+    "@auth/core": "^0.37.0",
+    "@convex-dev/crons": "^0.2.0",
+    "@phosphor-icons/react": "^2.1.10",
+    "@robelest/convex-auth": "^0.0.2",
+    "convex": "^1.31.7",
+    "convex-helpers": "^0.1.112",
+    "lucide-react": "^0.460.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0",
+    "sonner": "^1.7.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@convex-dev/eslint-plugin": "^1.1.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.0",
+    "eslint": "^9.15.0",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
+    "typescript": "~5.6.2",
+    "typescript-eslint": "^8.55.0",
+    "vite": "^6.0.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/waynesutton/humanagent"
+  }
+}

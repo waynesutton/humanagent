@@ -1,0 +1,105 @@
+# Changelog
+
+All notable changes to HumanAgent are documented here.
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+
+## [0.3.0] - 2026-02-14
+
+### Added
+
+- Agent runtime with multi-provider BYOK support (OpenRouter, Anthropic, OpenAI, Google Gemini, Mistral, MiniMax, Kimi, xAI Grok)
+- Agent security module: 15+ injection detection patterns, sensitive data redaction, exfiltration prevention, system prompt hardening
+- Agent memory system with vector embeddings table for conversation context retrieval
+- Agent thinking system: observations, reasoning, decisions, reflections, goal updates
+- MCP server endpoints at `/mcp/u/:username` with JSON-RPC 2.0 protocol (initialize, tools/list, tools/call)
+- WebMCP tool registration on public agent pages for Chrome 146+ (navigator.modelContext)
+- Twilio webhooks for SMS and voice inbound handling with TwiML responses
+- Skill file endpoints: `/u/:username/skill.json` and `/u/:username/SKILL.md`
+- LLMs.txt endpoints: `/u/:username/llms.txt` and `/u/:username/llms-full.md` for AI discoverability
+- Connected apps table with OAuth token management for Twitter, GitHub, Google Calendar, Slack
+- Permissions table with scoped access control (public/authenticated/trusted)
+- Rate limits table with sliding window counters
+- MCP connections table for tracking external MCP server connections
+- Agent health table with heartbeat status tracking
+- User schedules table for dynamic per-user cron jobs
+- Cron jobs: agent heartbeat (5min), monthly token reset, memory compression (24h), rate limit cleanup (1h)
+- Inbox page for viewing and managing email/phone/API conversations
+- Multi-agent support: users can create multiple agents with independent configs
+- Privacy settings: granular control over what's visible on public profile
+- Public/private toggle on tasks and feed items
+- X/Twitter integration with xAI Grok mode and direct X API mode
+- Agent scheduling: manual, auto, or cron-based execution modes
+- Browser automation config: Firecrawl, Stagehand, Browser Use (BYOK)
+- ElevenLabs and OpenAI TTS voice configuration for agents
+- Task archiving and restore functionality
+- Agent thoughts table for storing reasoning and decision-making
+
+### Changed
+
+- Updated schema with 20+ tables including agentThoughts, llmsTxt, and expanded agents table
+- Enhanced http.ts with MCP server, Twilio webhooks, skill file endpoints, llms.txt
+- Added Inbox to navigation, replaced Conversations link
+- PublicUserProfilePage now supports agent selection and WebMCP tools
+- Settings page now supports 8 LLM providers with BYOK credentials
+- Agents page now includes X/Twitter config, scheduling, and voice settings
+
+## [0.2.0] - 2026-02-13
+
+### Added
+
+- Full frontend rebuild with new color scheme based on OpenAI FM design
+- New color tokens: bg-primary (#f3f3f3), accent-interactive (#ea5b26), text-primary (#232323)
+- DM Sans font family throughout the app
+- LandingPage: hero, features grid, how it works, CTA sections
+- DashboardPage: status cards, quick actions, recent activity feed, endpoint cards
+- SkillFilePage: edit identity, capabilities, knowledge domains, communication preferences
+- ConversationsPage: filterable conversation list with message detail view
+- BoardPage: kanban task board with drag and drop, task status badges
+- FeedPage: activity feed with public post creation
+- SettingsPage: profile editing, LLM config, API key management with copy functionality
+- PublicAgentPage: public agent profile with capabilities, tasks, activity, connect endpoints
+- DashboardLayout: sticky header, mobile bottom nav, agent status indicator
+- Reusable component classes: btn, btn-accent, btn-secondary, input, card, badge
+- Added listMyConversations query to conversations functions
+
+### Changed
+
+- Replaced surface/ink color tokens with new bg/text/accent/border scheme
+- Updated Tailwind config with new animations (fade-in, slide-up, slide-down)
+- Updated index.css with DM Sans import and component utility classes
+- Simplified AuthRequired wrapper with new loading states
+
+## [0.1.0] - 2026-02-13
+
+### Added
+
+- Convex schema with 16 tables: users, skills, agentMemory, conversations, tasks, feedItems, boardColumns, connectedApps, auditLog, permissions, apiKeys, mcpConnections, rateLimits, securityFlags, agentHealth, userSchedules
+- Authentication via @robelest/convex-auth with GitHub and Google OAuth providers
+- Agent runtime pipeline: security check, conversation management, LLM call, audit logging
+- LLM model router supporting OpenRouter (default), Anthropic, OpenAI, and custom BYOK endpoints
+- Security module with injection detection, sensitive content patterns, exfiltration prevention
+- REST API endpoints: POST/GET `/api/v1/agents/:username/messages`, agent card at `/.well-known/agent.json`
+- AgentMail inbound email webhook handler
+- Cron jobs: agent heartbeat (60s), monthly token budget reset, weekly feed cleanup
+- Agent health monitoring with stalled task and expiring credential detection
+- CRUD functions for users, skills, conversations, feed, board, API keys, audit log, rate limits
+- React frontend with Vite, Tailwind CSS, React Router
+- Pages: landing, login, onboarding, dashboard, settings, public agent page (`/u/:username`)
+- Dashboard layout with sidebar navigation
+- Shared Zod schemas and TypeScript types
+- Skill file system: portable capability definitions per user with publish/unpublish
+- Three-tier permission model: public, authenticated, trusted
+- API key management with SHA-256 hashing and scoped rate limits
+- Sliding-window rate limiting
+- Append-only audit log
+
+### Fixed
+
+- Fixed `@robelest/convex-auth` version in package.json from `^0.1.0` to `^0.0.2` (matching published versions on npm)
+- Updated `convex` dependency from `^1.17.0` to `^1.31.7` (required by @robelest/convex-auth peer dependency)
+- Fixed `crons.ts` using deprecated `crons.monthly` and `crons.weekly` helpers, replaced with `crons.cron` using standard cron expressions
+- Fixed `convex/heartbeat.ts` import paths from `../_generated/` to `./_generated/` (file is in convex root, not a subdirectory)
+- Created `convex/lib/authHelpers.ts` to bridge `Id<"user">` (auth component type) to `Id<"users">` (app schema type) across all function files
+- Fixed `Id<"user">` vs `Id<"users">` type mismatch in all 9 function files (users, skills, conversations, feed, board, apiKeys, auditLog, security, rateLimit)
+- Fixed circular type inference in `convex/agent/runtime.ts` by adding explicit return type annotation
+- Changed `convex/agent/modelRouter.ts` from public `action` to `internalAction` (it's only called from other internal actions)
