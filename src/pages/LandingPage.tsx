@@ -82,10 +82,10 @@ export function LandingPage() {
                 <span className="text-green-600">+</span> skill file created at <span className="text-ink-1">/u/{"{username}"}/skill.json</span>
               </div>
               <div className="text-ink-2">
-                <span className="text-green-600">+</span> MCP server available at <span className="text-ink-1">/mcp/{"{username}"}</span>
+                <span className="text-green-600">+</span> MCP server available at <span className="text-ink-1">/mcp/u/{"{username}"}</span>
               </div>
               <div className="text-ink-2">
-                <span className="text-green-600">+</span> REST API endpoint at <span className="text-ink-1">/api/agents/{"{username}"}</span>
+                <span className="text-green-600">+</span> REST API endpoint at <span className="text-ink-1">/api/v1/agents/{"{username}"}</span>
               </div>
               <div className="text-ink-2">
                 <span className="text-green-600">+</span> Agent email: <span className="text-ink-1">{"{username}"}@humanai.gent</span>
@@ -275,7 +275,7 @@ const features = [
   },
   {
     title: "Agent phone",
-    description: "A voice-capable number where your agent answers calls and takes action via Twilio + ElevenLabs.",
+    description: "A voice-capable number where your agent can answer calls and handle SMS via Twilio.",
     icon: (
       <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
@@ -360,7 +360,7 @@ const features = [
 const steps = [
   {
     title: "Sign up",
-    description: "One click with GitHub or Google. No credit card required.",
+    description: "One click with GitHub. No credit card required.",
   },
   {
     title: "Define your skill",

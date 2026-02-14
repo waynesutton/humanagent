@@ -3,6 +3,7 @@ import { Link, Navigate, useLocation, useParams } from "react-router-dom";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { FeedTimelineItem, type FeedTimelineItemData } from "../components/feed/FeedTimelineItem";
+import { GithubLogo, LinkedinLogo, XLogo } from "@phosphor-icons/react";
 
 interface PrivacySettings {
   profileVisible: boolean;
@@ -20,6 +21,11 @@ interface PublicUser {
   name?: string;
   bio?: string;
   image?: string;
+  socialProfiles?: {
+    twitter?: string;
+    linkedin?: string;
+    github?: string;
+  };
   profileHidden?: boolean;
   privacySettings?: PrivacySettings;
 }
@@ -145,27 +151,49 @@ export function PublicUserProfilePage() {
         : null;
 
   const socialLinks = useMemo(() => {
-    const links: Array<{ service: string; href: string; label: string }> = [];
+    const linksMap = new Map<string, { service: string; href: string; label: string }>();
     const serviceOrder = ["github", "twitter", "linkedin"] as const;
+
+    const manualProfiles = user?.socialProfiles;
+    if (manualProfiles) {
+      const manualEntries = [
+        { service: "github", value: manualProfiles.github },
+        { service: "twitter", value: manualProfiles.twitter },
+        { service: "linkedin", value: manualProfiles.linkedin },
+      ] as const;
+      for (const entry of manualEntries) {
+        if (!entry.value) continue;
+        const href = buildSocialHref(entry.service, entry.value);
+        if (!href) continue;
+        linksMap.set(entry.service, {
+          service: entry.service,
+          href,
+          label: entry.value,
+        });
+      }
+    }
+
     for (const service of serviceOrder) {
       const match = socialProfiles?.find((item) => item.service === service);
       if (!match) continue;
-      const href =
-        match.profileUrl ??
-        (match.externalUsername
-          ? service === "twitter"
-            ? `https://x.com/${match.externalUsername.replace("@", "")}`
-            : `https://${service}.com/${match.externalUsername.replace("@", "")}`
-          : null);
+      const href = buildSocialHref(
+        service,
+        match.profileUrl ?? match.externalUsername ?? ""
+      );
       if (!href) continue;
-      links.push({
+      if (linksMap.has(service)) continue;
+      linksMap.set(service, {
         service,
         href,
         label: match.externalUsername ?? service,
       });
     }
-    return links;
-  }, [socialProfiles]);
+    return serviceOrder.map((service) => linksMap.get(service)).filter(Boolean) as Array<{
+      service: string;
+      href: string;
+      label: string;
+    }>;
+  }, [socialProfiles, user?.socialProfiles]);
 
   // Register WebMCP tools for Chrome 146+ (navigator.modelContext)
   useEffect(() => {
@@ -321,10 +349,11 @@ export function PublicUserProfilePage() {
                       href={link.href}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-2 border border-surface-3 px-3 py-1.5 text-xs text-ink-1 hover:bg-surface-1 hover:text-ink-0"
+                      className="inline-flex h-9 w-9 items-center justify-center border border-surface-3 text-ink-1 hover:bg-surface-1 hover:text-ink-0"
+                      aria-label={`${link.service} profile`}
+                      title={link.label}
                     >
                       <SocialIcon service={link.service} />
-                      <span>{link.label}</span>
                     </a>
                   ))}
                 </div>
@@ -515,9 +544,20 @@ function Avatar({
 }
 
 function SocialIcon({ service }: { service: string }) {
-  if (service === "github") return <span className="font-mono text-[10px]">GH</span>;
-  if (service === "linkedin") return <span className="font-mono text-[10px]">IN</span>;
-  return <span className="font-mono text-[10px]">X</span>;
+  if (service === "github") return <GithubLogo size={16} weight="regular" />;
+  if (service === "linkedin") return <LinkedinLogo size={16} weight="regular" />;
+  return <XLogo size={16} weight="regular" />;
+}
+
+function buildSocialHref(service: "github" | "twitter" | "linkedin", raw: string) {
+  const value = raw.trim();
+  if (!value) return null;
+  if (value.startsWith("http://") || value.startsWith("https://")) return value;
+  const handle = value.replace(/^@/, "");
+  if (!handle) return null;
+  if (service === "twitter") return `https://x.com/${handle}`;
+  if (service === "linkedin") return `https://linkedin.com/in/${handle}`;
+  return `https://github.com/${handle}`;
 }
 
 function getConnectPills(agent: PublicAgentSummary, privacy: PrivacySettings): string[] {
@@ -560,6 +600,27 @@ function buildConnectCards(username: string, agent: PublicAgentSummary, privacy:
       external: true,
     });
   }
+  // Discovery docs endpoints
+  cards.push({
+    label: "API Docs",
+    value: `humanai.gent/api/v1/agents/${username}/docs.md`,
+    href: `/api/v1/agents/${username}/docs.md`,
+  });
+  cards.push({
+    label: "Tools Docs",
+    value: `humanai.gent/api/v1/agents/${username}/tools.md`,
+    href: `/api/v1/agents/${username}/tools.md`,
+  });
+  cards.push({
+    label: "OpenAPI",
+    value: `humanai.gent/api/v1/agents/${username}/openapi.json`,
+    href: `/api/v1/agents/${username}/openapi.json`,
+  });
+  cards.push({
+    label: "Sitemap",
+    value: `humanai.gent/${username}/sitemap.md`,
+    href: `/${username}/sitemap.md`,
+  });
   return cards;
 }
 

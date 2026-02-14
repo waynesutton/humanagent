@@ -285,7 +285,7 @@ Each user gets their own MCP server endpoint that any MCP-compatible client can 
 **MCP Endpoint:**
 
 ```
-https://mcp.humanai.gent/u/{username}
+https://humanai.gent/mcp/u/{username}
 ```
 
 **WebMCP (browser-native):**
@@ -1033,7 +1033,7 @@ securityFlags
    {
      "mcpServers": {
        "wayne-agent": {
-         "url": "https://mcp.humanai.gent/u/wayne",
+         "url": "https://humanai.gent/mcp/u/wayne",
          "auth": { "type": "oauth2" }
        }
      }

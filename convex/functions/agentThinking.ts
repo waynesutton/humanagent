@@ -6,7 +6,6 @@
  */
 import { v } from "convex/values";
 import { query, mutation, internalMutation, internalQuery } from "../_generated/server";
-import { Id } from "../_generated/dataModel";
 
 // ============================================================
 // Public Queries
@@ -59,13 +58,13 @@ export const getAgentThoughts = query({
 
     const user = await ctx.db
       .query("users")
-      .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      .withIndex("by_authUserId", (q) =>
+        q.eq("authUserId", identity.subject)
       )
       .unique();
     if (!user || agent.userId !== user._id) throw new Error("Unauthorized");
 
-    let query = ctx.db
+    const query = ctx.db
       .query("agentThoughts")
       .withIndex("by_agentId", (q) => q.eq("agentId", args.agentId))
       .order("desc");
@@ -108,8 +107,8 @@ export const getThinkingStatus = query({
 
     const user = await ctx.db
       .query("users")
-      .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      .withIndex("by_authUserId", (q) =>
+        q.eq("authUserId", identity.subject)
       )
       .unique();
     if (!user || agent.userId !== user._id) return null;
@@ -168,8 +167,8 @@ export const addThought = mutation({
 
     const user = await ctx.db
       .query("users")
-      .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      .withIndex("by_authUserId", (q) =>
+        q.eq("authUserId", identity.subject)
       )
       .unique();
     if (!user || agent.userId !== user._id) throw new Error("Unauthorized");
@@ -219,8 +218,8 @@ export const toggleThinkingPause = mutation({
 
     const user = await ctx.db
       .query("users")
-      .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      .withIndex("by_authUserId", (q) =>
+        q.eq("authUserId", identity.subject)
       )
       .unique();
     if (!user || agent.userId !== user._id) throw new Error("Unauthorized");
@@ -257,8 +256,8 @@ export const updateGoal = mutation({
 
     const user = await ctx.db
       .query("users")
-      .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      .withIndex("by_authUserId", (q) =>
+        q.eq("authUserId", identity.subject)
       )
       .unique();
     if (!user || agent.userId !== user._id) throw new Error("Unauthorized");

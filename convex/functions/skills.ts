@@ -3,6 +3,266 @@ import { v } from "convex/values";
 import { authedMutation, authedQuery, optionalAuthQuery } from "../lib/functions";
 import { internal } from "../_generated/api";
 
+const MAX_IMPORT_BYTES = 400_000;
+const MAX_SKILLS_PER_IMPORT = 25;
+const MAX_NAME_LENGTH = 80;
+const MAX_BIO_LENGTH = 1200;
+const MAX_CAPABILITIES = 40;
+const MAX_DOMAINS = 60;
+
+type SkillImportCandidate = {
+  name: string;
+  bio: string;
+  capabilities: Array<{ name: string; description: string; toolId?: string }>;
+  knowledgeDomains: Array<string>;
+  communicationPrefs?: { tone?: string; timezone?: string; availability?: string };
+};
+
+type SecurityMatch = {
+  flagType: "injection" | "sensitive" | "exfiltration";
+  severity: "warn" | "block";
+  pattern: string;
+  snippet: string;
+};
+
+const SECURITY_RULES: Array<{
+  regex: RegExp;
+  flagType: "injection" | "sensitive" | "exfiltration";
+  severity: "warn" | "block";
+  pattern: string;
+}> = [
+  {
+    regex: /-----BEGIN\s+(?:RSA|DSA|EC|OPENSSH|PGP)\s+PRIVATE KEY-----/i,
+    flagType: "sensitive",
+    severity: "block",
+    pattern: "private_key_block",
+  },
+  {
+    regex: /\b(?:api[_-]?key|secret|token|password)\b\s*[:=]\s*["'][^"']{8,}["']/i,
+    flagType: "sensitive",
+    severity: "block",
+    pattern: "hardcoded_secret",
+  },
+  {
+    regex: /\b(child_process|process\.env|Deno\.env)\b/i,
+    flagType: "injection",
+    severity: "warn",
+    pattern: "runtime_access_pattern",
+  },
+  {
+    regex: /\b(?:rm\s+-rf|curl\s+[^|]+\|\s*(?:bash|sh)|wget\s+[^|]+\|\s*(?:bash|sh))\b/i,
+    flagType: "injection",
+    severity: "block",
+    pattern: "destructive_shell_pattern",
+  },
+  {
+    regex: /\beval\s*\(/i,
+    flagType: "injection",
+    severity: "warn",
+    pattern: "eval_usage",
+  },
+];
+
+function clip(input: string, max: number): string {
+  return input.length <= max ? input : input.slice(0, max);
+}
+
+function cleanLine(input: string): string {
+  return input.replace(/\s+/g, " ").trim();
+}
+
+function parseFrontmatter(markdown: string): Record<string, string> {
+  const match = markdown.match(/^---\s*\n([\s\S]*?)\n---\s*\n?/);
+  if (!match) return {};
+  const raw = match[1];
+  if (!raw) return {};
+  const lines = raw.split("\n");
+  const result: Record<string, string> = {};
+  for (const line of lines) {
+    const splitAt = line.indexOf(":");
+    if (splitAt === -1) continue;
+    const key = cleanLine(line.slice(0, splitAt));
+    const value = cleanLine(line.slice(splitAt + 1)).replace(/^["']|["']$/g, "");
+    if (key) result[key] = value;
+  }
+  return result;
+}
+
+function parseSkillMarkdown(markdown: string): SkillImportCandidate {
+  const frontmatter = parseFrontmatter(markdown);
+  const headingMatch = markdown.match(/^#\s+(.+)$/m);
+  const descriptionMatch = markdown.match(/(?:^description:\s*(.+)$)/im);
+  const name = cleanLine(frontmatter.name ?? headingMatch?.[1] ?? "Imported skill");
+  const description = cleanLine(
+    frontmatter.description ?? descriptionMatch?.[1] ?? "Imported from markdown skill file."
+  );
+
+  const bulletLines = markdown
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "))
+    .map((line) => cleanLine(line.replace(/^-+\s*/, "")))
+    .filter(Boolean)
+    .slice(0, MAX_CAPABILITIES);
+
+  const capabilities = bulletLines.map((line) => ({
+    name: clip(line.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, ""), 64) || "task",
+    description: clip(line, 240),
+  }));
+
+  return {
+    name,
+    bio: description,
+    capabilities,
+    knowledgeDomains: [],
+  };
+}
+
+function fromUnknownSkill(value: unknown): SkillImportCandidate | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const identity = raw.identity && typeof raw.identity === "object"
+    ? (raw.identity as Record<string, unknown>)
+    : undefined;
+
+  const name =
+    (typeof identity?.name === "string" ? identity.name : undefined) ??
+    (typeof raw.name === "string" ? raw.name : undefined) ??
+    (typeof raw.title === "string" ? raw.title : undefined);
+  const bio =
+    (typeof identity?.bio === "string" ? identity.bio : undefined) ??
+    (typeof raw.bio === "string" ? raw.bio : undefined) ??
+    (typeof raw.description === "string" ? raw.description : undefined);
+  if (!name || !bio) return null;
+
+  const capabilitiesInput = Array.isArray(raw.capabilities) ? raw.capabilities : [];
+  const capabilities: Array<{ name: string; description: string; toolId?: string }> =
+    capabilitiesInput.flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const item = entry as Record<string, unknown>;
+      if (typeof item.name !== "string" || typeof item.description !== "string") return [];
+      return [
+        {
+          name: item.name,
+          description: item.description,
+          ...(typeof item.toolId === "string" ? { toolId: item.toolId } : {}),
+        },
+      ];
+    });
+
+  const knowledgeDomainsInput = Array.isArray(raw.knowledgeDomains) ? raw.knowledgeDomains : [];
+  const knowledgeDomains = knowledgeDomainsInput.filter(
+    (entry): entry is string => typeof entry === "string"
+  );
+
+  const communicationPrefsRaw =
+    raw.communicationPrefs && typeof raw.communicationPrefs === "object"
+      ? (raw.communicationPrefs as Record<string, unknown>)
+      : undefined;
+
+  return {
+    name,
+    bio,
+    capabilities,
+    knowledgeDomains,
+    communicationPrefs: {
+      tone:
+        typeof communicationPrefsRaw?.tone === "string" ? communicationPrefsRaw.tone : undefined,
+      timezone:
+        typeof communicationPrefsRaw?.timezone === "string"
+          ? communicationPrefsRaw.timezone
+          : undefined,
+      availability:
+        typeof communicationPrefsRaw?.availability === "string"
+          ? communicationPrefsRaw.availability
+          : undefined,
+    },
+  };
+}
+
+function normalizeSkillCandidate(candidate: SkillImportCandidate): SkillImportCandidate {
+  const name = clip(cleanLine(candidate.name), MAX_NAME_LENGTH);
+  const bio = clip(cleanLine(candidate.bio), MAX_BIO_LENGTH);
+  const capabilities = candidate.capabilities
+    .map((capability) => ({
+      name: clip(cleanLine(capability.name), 64),
+      description: clip(cleanLine(capability.description), 320),
+      toolId:
+        capability.toolId && cleanLine(capability.toolId)
+          ? clip(cleanLine(capability.toolId), 128)
+          : undefined,
+    }))
+    .filter((capability) => capability.name && capability.description)
+    .slice(0, MAX_CAPABILITIES);
+  const knowledgeDomains = Array.from(
+    new Set(
+      candidate.knowledgeDomains
+        .map((domain) => clip(cleanLine(domain), 80))
+        .filter(Boolean)
+        .slice(0, MAX_DOMAINS)
+    )
+  );
+
+  return {
+    name,
+    bio,
+    capabilities,
+    knowledgeDomains,
+    communicationPrefs: candidate.communicationPrefs,
+  };
+}
+
+function parseSkillsPayload(rawPayload: string): Array<SkillImportCandidate> {
+  const trimmed = rawPayload.trim();
+  if (!trimmed) {
+    throw new Error("Import content is empty");
+  }
+
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map(fromUnknownSkill)
+        .filter((candidate): candidate is SkillImportCandidate => !!candidate)
+        .slice(0, MAX_SKILLS_PER_IMPORT);
+    }
+
+    const direct = fromUnknownSkill(parsed);
+    if (direct) return [direct];
+
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      Array.isArray((parsed as { skills?: unknown }).skills)
+    ) {
+      const wrapped = ((parsed as { skills: unknown[] }).skills ?? [])
+        .map(fromUnknownSkill)
+        .filter((candidate): candidate is SkillImportCandidate => !!candidate)
+        .slice(0, MAX_SKILLS_PER_IMPORT);
+      if (wrapped.length > 0) return wrapped;
+    }
+
+    throw new Error("JSON does not contain a valid skill shape");
+  }
+
+  return [parseSkillMarkdown(trimmed)];
+}
+
+function runSecurityScan(payload: string): Array<SecurityMatch> {
+  const matches: Array<SecurityMatch> = [];
+  for (const rule of SECURITY_RULES) {
+    const hit = payload.match(rule.regex);
+    if (!hit) continue;
+    matches.push({
+      flagType: rule.flagType,
+      severity: rule.severity,
+      pattern: rule.pattern,
+      snippet: clip(cleanLine(hit[0]), 160),
+    });
+  }
+  return matches;
+}
+
 // ============================================================
 // Public queries
 // ============================================================
@@ -12,6 +272,7 @@ export const list = authedQuery({
   args: {
     agentId: v.optional(v.id("agents")),
   },
+  returns: v.array(v.any()),
   handler: async (ctx, { agentId }) => {
     if (agentId) {
       // Get skills for specific agent
@@ -31,6 +292,7 @@ export const list = authedQuery({
 // Legacy: get single skill (for backwards compatibility)
 export const getMySkill = optionalAuthQuery({
   args: {},
+  returns: v.union(v.any(), v.null()),
   handler: async (ctx) => {
     const { userId } = ctx;
     if (!userId) return null;
@@ -44,6 +306,7 @@ export const getMySkill = optionalAuthQuery({
 
 export const getPublicSkill = query({
   args: { username: v.string() },
+  returns: v.union(v.any(), v.null()),
   handler: async (ctx, { username }) => {
     const user = await ctx.db
       .query("users")
@@ -77,6 +340,7 @@ export const getPublicSkill = query({
 // Public: get a published skill for a specific public agent slug.
 export const getPublicSkillByAgent = query({
   args: { username: v.string(), slug: v.string() },
+  returns: v.union(v.any(), v.null()),
   handler: async (ctx, { username, slug }) => {
     const user = await ctx.db
       .query("users")
@@ -151,6 +415,7 @@ export const create = authedMutation({
       })
     ),
   },
+  returns: v.id("skills"),
   handler: async (ctx, args) => {
     // If agentId provided, verify ownership
     if (args.agentId) {
@@ -192,6 +457,107 @@ export const create = authedMutation({
   },
 });
 
+export const importSkills = authedMutation({
+  args: {
+    source: v.string(),
+    payload: v.string(),
+    agentId: v.optional(v.id("agents")),
+    defaultIsActive: v.optional(v.boolean()),
+  },
+  returns: v.object({
+    importedCount: v.number(),
+    importedSkillIds: v.array(v.id("skills")),
+    warnings: v.array(v.string()),
+  }),
+  handler: async (ctx, args) => {
+    const byteLength = new TextEncoder().encode(args.payload).length;
+    if (byteLength > MAX_IMPORT_BYTES) {
+      throw new Error("Import payload is too large");
+    }
+
+    if (args.agentId) {
+      const agent = await ctx.db.get(args.agentId);
+      if (!agent || agent.userId !== ctx.userId) {
+        throw new Error("Agent not found");
+      }
+    }
+
+    const securityMatches = runSecurityScan(args.payload);
+    if (securityMatches.length > 0) {
+      await Promise.all(
+        securityMatches.map((match) =>
+          ctx.db.insert("securityFlags", {
+            userId: ctx.userId,
+            source: args.source,
+            flagType: match.flagType,
+            severity: match.severity,
+            pattern: match.pattern,
+            inputSnippet: match.snippet,
+            action: match.severity === "block" ? "blocked_import" : "warned_import",
+            timestamp: Date.now(),
+          })
+        )
+      );
+    }
+
+    const blocked = securityMatches.some((match) => match.severity === "block");
+    if (blocked) {
+      throw new Error("Import blocked by security scanner");
+    }
+
+    let candidates = parseSkillsPayload(args.payload).map(normalizeSkillCandidate);
+    candidates = candidates.slice(0, MAX_SKILLS_PER_IMPORT);
+    if (candidates.length === 0) {
+      throw new Error("No valid skills found in import");
+    }
+
+    const warnings = securityMatches
+      .filter((match) => match.severity === "warn")
+      .map((match) => `Warning: ${match.pattern}`);
+
+    const now = Date.now();
+    const importedSkillIds = await Promise.all(
+      candidates.map((candidate) =>
+        ctx.db.insert("skills", {
+          userId: ctx.userId,
+          agentId: args.agentId,
+          version: 1,
+          identity: {
+            name: candidate.name,
+            bio: candidate.bio,
+          },
+          capabilities: candidate.capabilities,
+          knowledgeDomains: candidate.knowledgeDomains,
+          permissions: {
+            public: ["send_message", "get_capabilities"],
+            authenticated: ["check_availability", "request_meeting"],
+            trusted: ["*"],
+          },
+          communicationPrefs: {
+            tone: candidate.communicationPrefs?.tone ?? "friendly and professional",
+            timezone: candidate.communicationPrefs?.timezone ?? "America/Los_Angeles",
+            availability: candidate.communicationPrefs?.availability ?? "available",
+          },
+          toolDeclarations: [],
+          isPublished: false,
+          isActive: args.defaultIsActive ?? true,
+          updatedAt: now,
+        })
+      )
+    );
+
+    await ctx.scheduler.runAfter(0, internal.functions.llmsTxt.regenerate, {
+      userId: ctx.userId,
+    });
+
+    return {
+      importedCount: importedSkillIds.length,
+      importedSkillIds,
+      warnings,
+    };
+  },
+});
+
 export const update = authedMutation({
   args: {
     skillId: v.optional(v.id("skills")), // Optional for backwards compat
@@ -221,6 +587,7 @@ export const update = authedMutation({
     ),
     isActive: v.optional(v.boolean()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     let skill;
 
@@ -255,12 +622,14 @@ export const update = authedMutation({
     await ctx.scheduler.runAfter(0, internal.functions.llmsTxt.regenerate, {
       userId: ctx.userId,
     });
+    return null;
   },
 });
 
 // Delete a skill
 export const remove = authedMutation({
   args: { skillId: v.id("skills") },
+  returns: v.null(),
   handler: async (ctx, { skillId }) => {
     const skill = await ctx.db.get(skillId);
     if (!skill || skill.userId !== ctx.userId) {
@@ -272,6 +641,7 @@ export const remove = authedMutation({
     await ctx.scheduler.runAfter(0, internal.functions.llmsTxt.regenerate, {
       userId: ctx.userId,
     });
+    return null;
   },
 });
 
@@ -281,6 +651,7 @@ export const assignToAgent = authedMutation({
     skillId: v.id("skills"),
     agentId: v.union(v.id("agents"), v.null()),
   },
+  returns: v.null(),
   handler: async (ctx, { skillId, agentId }) => {
     const skill = await ctx.db.get(skillId);
     if (!skill || skill.userId !== ctx.userId) {
@@ -296,11 +667,13 @@ export const assignToAgent = authedMutation({
     }
 
     await ctx.db.patch(skillId, { agentId: agentId ?? undefined, updatedAt: Date.now() });
+    return null;
   },
 });
 
 export const publish = authedMutation({
   args: { skillId: v.optional(v.id("skills")) },
+  returns: v.null(),
   handler: async (ctx, { skillId }) => {
     let skill;
     if (skillId) {
@@ -322,11 +695,13 @@ export const publish = authedMutation({
     await ctx.scheduler.runAfter(0, internal.functions.llmsTxt.regenerate, {
       userId: ctx.userId,
     });
+    return null;
   },
 });
 
 export const unpublish = authedMutation({
   args: { skillId: v.optional(v.id("skills")) },
+  returns: v.null(),
   handler: async (ctx, { skillId }) => {
     let skill;
     if (skillId) {
@@ -348,6 +723,7 @@ export const unpublish = authedMutation({
     await ctx.scheduler.runAfter(0, internal.functions.llmsTxt.regenerate, {
       userId: ctx.userId,
     });
+    return null;
   },
 });
 
@@ -358,6 +734,7 @@ export const unpublish = authedMutation({
 // Get first skill for a user (for backwards compatibility)
 export const getByUserId = internalQuery({
   args: { userId: v.id("users") },
+  returns: v.union(v.any(), v.null()),
   handler: async (ctx, { userId }) => {
     // Users can have multiple skills, return first one
     return await ctx.db

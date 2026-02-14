@@ -10,6 +10,7 @@ import { internal } from "../_generated/api";
 
 export const getColumns = authedQuery({
   args: {},
+  returns: v.array(v.any()),
   handler: async (ctx) => {
     return await getManyFrom(ctx.db, "boardColumns", "by_userId", ctx.userId, "userId");
   },
@@ -17,7 +18,8 @@ export const getColumns = authedQuery({
 
 export const getPublicColumns = query({
   args: { username: v.string() },
-  handler: async (_ctx, _args) => {
+  returns: v.array(v.any()),
+  handler: async () => {
     // Task board is now private to the authenticated user.
     return [];
   },
@@ -30,6 +32,7 @@ export const getPublicColumns = query({
 // Get active (non-archived) tasks
 export const getTasks = authedQuery({
   args: {},
+  returns: v.array(v.any()),
   handler: async (ctx) => {
     const tasks = await ctx.db
       .query("tasks")
@@ -44,6 +47,7 @@ export const getTasks = authedQuery({
 // Get archived tasks
 export const getArchivedTasks = authedQuery({
   args: {},
+  returns: v.array(v.any()),
   handler: async (ctx) => {
     const tasks = await ctx.db
       .query("tasks")
@@ -57,7 +61,8 @@ export const getArchivedTasks = authedQuery({
 
 export const getPublicTasks = query({
   args: { username: v.string() },
-  handler: async (_ctx, _args) => {
+  returns: v.array(v.any()),
+  handler: async () => {
     // Task board is now private to the authenticated user.
     return [];
   },
@@ -69,6 +74,7 @@ export const createTask = authedMutation({
     boardColumnId: v.optional(v.id("boardColumns")),
     agentId: v.optional(v.id("agents")),
   },
+  returns: v.id("tasks"),
   handler: async (ctx, args) => {
     // If agentId provided, verify ownership
     if (args.agentId) {
@@ -105,6 +111,7 @@ export const moveTask = authedMutation({
       )
     ),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const task = await ctx.db.get(args.taskId);
     if (!task || task.userId !== ctx.userId) throw new Error("Task not found");
@@ -138,6 +145,7 @@ export const moveTask = authedMutation({
         });
       }
     }
+    return null;
   },
 });
 
@@ -148,6 +156,7 @@ export const updateTask = authedMutation({
     description: v.optional(v.string()),
     agentId: v.optional(v.union(v.id("agents"), v.null())),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const task = await ctx.db.get(args.taskId);
     if (!task || task.userId !== ctx.userId) throw new Error("Task not found");
@@ -167,22 +176,26 @@ export const updateTask = authedMutation({
     if (Object.keys(patch).length > 0) {
       await ctx.db.patch(args.taskId, patch);
     }
+    return null;
   },
 });
 
 // Delete a task
 export const deleteTask = authedMutation({
   args: { taskId: v.id("tasks") },
+  returns: v.null(),
   handler: async (ctx, { taskId }) => {
     const task = await ctx.db.get(taskId);
     if (!task || task.userId !== ctx.userId) throw new Error("Task not found");
     await ctx.db.delete(taskId);
+    return null;
   },
 });
 
 // Archive a task
 export const archiveTask = authedMutation({
   args: { taskId: v.id("tasks") },
+  returns: v.null(),
   handler: async (ctx, { taskId }) => {
     const task = await ctx.db.get(taskId);
     if (!task || task.userId !== ctx.userId) throw new Error("Task not found");
@@ -190,12 +203,14 @@ export const archiveTask = authedMutation({
       isArchived: true,
       archivedAt: Date.now(),
     });
+    return null;
   },
 });
 
 // Unarchive a task (restore from archive)
 export const unarchiveTask = authedMutation({
   args: { taskId: v.id("tasks") },
+  returns: v.null(),
   handler: async (ctx, { taskId }) => {
     const task = await ctx.db.get(taskId);
     if (!task || task.userId !== ctx.userId) throw new Error("Task not found");
@@ -203,12 +218,14 @@ export const unarchiveTask = authedMutation({
       isArchived: false,
       archivedAt: undefined,
     });
+    return null;
   },
 });
 
 // Bulk archive completed tasks
 export const archiveCompletedTasks = authedMutation({
   args: {},
+  returns: v.number(),
   handler: async (ctx) => {
     const tasks = await ctx.db
       .query("tasks")
@@ -233,6 +250,7 @@ export const archiveCompletedTasks = authedMutation({
 // Delete all archived tasks
 export const deleteArchivedTasks = authedMutation({
   args: {},
+  returns: v.number(),
   handler: async (ctx) => {
     const tasks = await ctx.db
       .query("tasks")

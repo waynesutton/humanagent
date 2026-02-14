@@ -3,6 +3,7 @@ import { httpAction } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { auth } from "./auth";
 import { corsRouter } from "convex-helpers/server/cors";
+import type { Id } from "./_generated/dataModel";
 
 const http = httpRouter();
 
@@ -28,19 +29,13 @@ cors.route({
       const url = new URL(request.url);
       const username = url.pathname.split("/")[4];
       if (!username) {
-        return new Response(
-          JSON.stringify({ error: "Username required" }),
-          { status: 400 }
-        );
+        return apiError(400, "invalid_request", "Username required");
       }
 
-      // Validate API key
+      // Validate API key (fail closed)
       const authHeader = request.headers.get("Authorization");
       if (!authHeader?.startsWith("Bearer ")) {
-        return new Response(
-          JSON.stringify({ error: "Bearer token required" }),
-          { status: 401 }
-        );
+        return apiError(401, "auth_required", "Bearer token required");
       }
 
       const token = authHeader.replace("Bearer ", "");
@@ -58,15 +53,17 @@ cors.route({
         { tokenHash }
       );
 
+      // Reject invalid or expired keys
+      if (!apiKey) {
+        return apiError(401, "invalid_token", "API key is invalid, revoked, or expired");
+      }
+
       // Look up user
       const user = await ctx.runQuery(api.functions.users.getByUsername, {
         username,
       });
       if (!user) {
-        return new Response(
-          JSON.stringify({ error: "Agent not found" }),
-          { status: 404 }
-        );
+        return apiError(404, "not_found", "Agent not found");
       }
 
       const defaultPublicAgent = await ctx.runQuery(
@@ -74,19 +71,13 @@ cors.route({
         { username }
       );
       if (!defaultPublicAgent) {
-        return new Response(
-          JSON.stringify({ error: "No public agent configured for this user" }),
-          { status: 404 }
-        );
+        return apiError(404, "not_found", "No public agent configured for this user");
       }
 
       // Parse body
       const body = (await request.json()) as { content?: string };
       if (!body.content) {
-        return new Response(
-          JSON.stringify({ error: "content field required" }),
-          { status: 400 }
-        );
+        return apiError(400, "invalid_request", "content field required");
       }
 
       // Process message
@@ -97,18 +88,16 @@ cors.route({
           agentId: defaultPublicAgent._id,
           message: body.content,
           channel: "api",
-          callerId: apiKey?.keyPrefix ?? "anonymous",
+          callerId: apiKey.keyPrefix,
         }
       );
 
       return new Response(JSON.stringify(result), {
         status: result.blocked ? 400 : 200,
+        headers: { "Content-Type": "application/json" },
       });
     } catch (error) {
-      return new Response(
-        JSON.stringify({ error: String(error) }),
-        { status: 500 }
-      );
+      return apiError(500, "internal_error", String(error));
     }
   }),
 });
@@ -124,19 +113,13 @@ cors.route({
       const username = pathParts[4];
       const slug = pathParts[5];
       if (!username || !slug) {
-        return new Response(
-          JSON.stringify({ error: "Username and slug are required" }),
-          { status: 400 }
-        );
+        return apiError(400, "invalid_request", "Username and slug are required");
       }
 
-      // Validate API key
+      // Validate API key (fail closed)
       const authHeader = request.headers.get("Authorization");
       if (!authHeader?.startsWith("Bearer ")) {
-        return new Response(
-          JSON.stringify({ error: "Bearer token required" }),
-          { status: 401 }
-        );
+        return apiError(401, "auth_required", "Bearer token required");
       }
 
       const token = authHeader.replace("Bearer ", "");
@@ -154,14 +137,16 @@ cors.route({
         { tokenHash }
       );
 
+      // Reject invalid or expired keys
+      if (!apiKey) {
+        return apiError(401, "invalid_token", "API key is invalid, revoked, or expired");
+      }
+
       const user = await ctx.runQuery(api.functions.users.getByUsername, {
         username,
       });
       if (!user) {
-        return new Response(
-          JSON.stringify({ error: "Agent not found" }),
-          { status: 404 }
-        );
+        return apiError(404, "not_found", "Agent not found");
       }
 
       const publicAgent = await ctx.runQuery(
@@ -169,18 +154,12 @@ cors.route({
         { username, slug }
       );
       if (!publicAgent) {
-        return new Response(
-          JSON.stringify({ error: "Public agent not found for this slug" }),
-          { status: 404 }
-        );
+        return apiError(404, "not_found", "Public agent not found for this slug");
       }
 
       const body = (await request.json()) as { content?: string };
       if (!body.content) {
-        return new Response(
-          JSON.stringify({ error: "content field required" }),
-          { status: 400 }
-        );
+        return apiError(400, "invalid_request", "content field required");
       }
 
       const result = await ctx.runAction(
@@ -190,18 +169,16 @@ cors.route({
           agentId: publicAgent._id,
           message: body.content,
           channel: "api",
-          callerId: apiKey?.keyPrefix ?? "anonymous",
+          callerId: apiKey.keyPrefix,
         }
       );
 
       return new Response(JSON.stringify(result), {
         status: result.blocked ? 400 : 200,
+        headers: { "Content-Type": "application/json" },
       });
     } catch (error) {
-      return new Response(
-        JSON.stringify({ error: String(error) }),
-        { status: 500 }
-      );
+      return apiError(500, "internal_error", String(error));
     }
   }),
 });
@@ -217,10 +194,7 @@ cors.route({
     const url = new URL(request.url);
     const username = url.pathname.split("/")[4];
     if (!username) {
-      return new Response(
-        JSON.stringify({ error: "Username required" }),
-        { status: 400 }
-      );
+      return apiError(400, "invalid_request", "Username required");
     }
 
     const defaultPublicAgent = await ctx.runQuery(
@@ -237,10 +211,7 @@ cors.route({
         });
 
     if (!skill) {
-      return new Response(
-        JSON.stringify({ error: "Agent not found or not published" }),
-        { status: 404 }
-      );
+      return apiError(404, "not_found", "Agent not found or not published");
     }
 
     // Content negotiation: markdown for agents, JSON for APIs
@@ -249,14 +220,20 @@ cors.route({
       const md = skillToMarkdown(skill, username);
       return new Response(md, {
         headers: {
-          "Content-Type": "text/markdown",
+          "Content-Type": "text/markdown; charset=utf-8",
+          "Vary": "Accept",
+          "Cache-Control": "public, max-age=300",
           "X-Markdown-Tokens": String(Math.ceil(md.length / 4)),
         },
       });
     }
 
     return new Response(JSON.stringify(skill), {
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Vary": "Accept",
+        "Cache-Control": "public, max-age=300",
+      },
     });
   }),
 });
@@ -271,10 +248,7 @@ cors.route({
     const username = pathParts[4];
     const slug = pathParts[5];
     if (!username || !slug) {
-      return new Response(
-        JSON.stringify({ error: "Username and slug are required" }),
-        { status: 400 }
-      );
+      return apiError(400, "invalid_request", "Username and slug are required");
     }
 
     const skill = await ctx.runQuery(api.functions.skills.getPublicSkillByAgent, {
@@ -283,25 +257,29 @@ cors.route({
     });
 
     if (!skill) {
-      return new Response(
-        JSON.stringify({ error: "Agent not found or not published" }),
-        { status: 404 }
-      );
+      return apiError(404, "not_found", "Agent not found or not published");
     }
 
+    // Content negotiation: markdown for agents, JSON for APIs
     const accept = request.headers.get("Accept") ?? "";
     if (accept.includes("text/markdown")) {
       const md = skillToMarkdown(skill, username);
       return new Response(md, {
         headers: {
-          "Content-Type": "text/markdown",
+          "Content-Type": "text/markdown; charset=utf-8",
+          "Vary": "Accept",
+          "Cache-Control": "public, max-age=300",
           "X-Markdown-Tokens": String(Math.ceil(md.length / 4)),
         },
       });
     }
 
     return new Response(JSON.stringify(skill), {
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Vary": "Accept",
+        "Cache-Control": "public, max-age=300",
+      },
     });
   }),
 });
@@ -346,7 +324,7 @@ http.route({
     const body = await request.text();
 
     // Verify webhook signature
-    if (!signature || !verifyWebhookSignature(body, signature)) {
+    if (!signature || !(await verifyWebhookSignature(body, signature))) {
       // Skip audit log for invalid webhooks (no user context)
       console.log("AgentMail webhook rejected: invalid signature");
       return new Response("Invalid signature", { status: 401 });
@@ -355,32 +333,87 @@ http.route({
     try {
       const event = JSON.parse(body) as {
         type: string;
-        to: string;
-        from: string;
-        subject: string;
-        text: string;
+        to?: string;
+        from?: string;
+        subject?: string;
+        text?: string;
+        html?: string;
+        messageId?: string;
+        threadId?: string;
       };
 
-      // Extract username from email address (user@humanai.gent)
-      const toUsername = event.to.split("@")[0];
-      if (!toUsername) {
+      const recipientEmail = normalizeEmailAddress(event.to);
+      if (!recipientEmail) {
         return new Response("Invalid recipient", { status: 400 });
       }
 
-      const user = await ctx.runQuery(api.functions.users.getByUsername, {
-        username: toUsername,
+      // Resolve by agent email first, then fallback to username local-part.
+      const agent = await ctx.runQuery(internal.functions.agents.getByEmail, {
+        email: recipientEmail,
       });
 
-      if (!user) {
-        return new Response("Agent not found", { status: 404 });
+      let userId: Id<"users">;
+      let agentId: Id<"agents"> | undefined;
+      if (agent) {
+        userId = agent.userId;
+        agentId = agent._id;
+      } else {
+        const toUsername = extractLocalPart(recipientEmail);
+        if (!toUsername) {
+          return new Response("Invalid recipient", { status: 400 });
+        }
+        const user = await ctx.runQuery(api.functions.users.getByUsername, {
+          username: toUsername,
+        });
+        if (!user) {
+          return new Response("Agent not found", { status: 404 });
+        }
+        userId = user._id;
       }
 
-      // Process the email as an inbound message
-      await ctx.runAction(internal.agent.runtime.processMessage, {
-        userId: user._id,
-        message: `Email from ${event.from}\nSubject: ${event.subject}\n\n${event.text}`,
+      const from = (event.from ?? "").trim();
+      const subject = (event.subject ?? "").trim();
+      const inboundText = (event.text ?? "").trim();
+      const inboundBody = inboundText || (event.html ?? "").trim();
+      if (!from || !inboundBody) {
+        return new Response("Invalid payload", { status: 400 });
+      }
+
+      const externalId = event.threadId ?? event.messageId ?? from;
+      const inboundMessage = `Email from ${from}\nSubject: ${subject || "(no subject)"}\n\n${inboundBody}`;
+
+      const conversationId = await ctx.runMutation(internal.functions.conversations.create, {
+        userId,
         channel: "email",
-        callerId: event.from,
+        externalId,
+        initialMessage: inboundMessage,
+      });
+
+      // Process the email as an inbound message
+      const result = await ctx.runAction(internal.agent.runtime.processMessage, {
+        userId,
+        agentId,
+        message: inboundMessage,
+        channel: "email",
+        callerId: from,
+      });
+
+      await ctx.runMutation(internal.functions.conversations.addAgentResponse, {
+        conversationId,
+        content: result.response,
+      });
+
+      await ctx.runMutation(internal.functions.feed.maybeCreateItem, {
+        userId,
+        type: "message_handled",
+        title: "Email received",
+        content: subject ? `From ${from}: ${subject}` : `From ${from}`,
+        metadata: {
+          channel: "email",
+          blocked: result.blocked,
+          externalId,
+        },
+        isPublic: false,
       });
 
       return new Response("OK", { status: 200 });
@@ -1267,16 +1300,202 @@ cors.route({
 });
 
 // ============================================================
+// Agent Docs: sitemap.md, docs.md, tools.md, openapi.json
+// ============================================================
+
+cors.route({
+  path: "/:username/sitemap.md",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const url = new URL(request.url);
+    const username = url.pathname.split("/")[1];
+    if (!username) {
+      return apiError(400, "invalid_request", "Username required");
+    }
+
+    const payload = await ctx.runQuery(api.functions.agentDocs.getDocsPayload, { username });
+    if (!payload) {
+      return apiError(404, "not_found", "Agent not found or profile hidden");
+    }
+
+    const { renderSitemapMd } = await import("./functions/agentDocs");
+    const md = renderSitemapMd(payload);
+    return new Response(md, {
+      headers: {
+        "Content-Type": "text/markdown; charset=utf-8",
+        "Cache-Control": "public, max-age=300",
+        "X-Markdown-Tokens": String(Math.ceil(md.length / 4)),
+      },
+    });
+  }),
+});
+
+cors.route({
+  path: "/api/v1/agents/:username/docs.md",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const url = new URL(request.url);
+    const username = url.pathname.split("/")[4];
+    if (!username) {
+      return apiError(400, "invalid_request", "Username required");
+    }
+
+    const payload = await ctx.runQuery(api.functions.agentDocs.getDocsPayload, { username });
+    if (!payload) {
+      return apiError(404, "not_found", "Agent not found or profile hidden");
+    }
+
+    const { renderDocsMd } = await import("./functions/agentDocs");
+    const md = renderDocsMd(payload);
+    return new Response(md, {
+      headers: {
+        "Content-Type": "text/markdown; charset=utf-8",
+        "Cache-Control": "public, max-age=300",
+        "X-Markdown-Tokens": String(Math.ceil(md.length / 4)),
+      },
+    });
+  }),
+});
+
+cors.route({
+  path: "/api/v1/agents/:username/tools.md",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const url = new URL(request.url);
+    const username = url.pathname.split("/")[4];
+    if (!username) {
+      return apiError(400, "invalid_request", "Username required");
+    }
+
+    const payload = await ctx.runQuery(api.functions.agentDocs.getDocsPayload, { username });
+    if (!payload) {
+      return apiError(404, "not_found", "Agent not found or profile hidden");
+    }
+
+    const { renderToolsMd } = await import("./functions/agentDocs");
+    const md = renderToolsMd(payload);
+    return new Response(md, {
+      headers: {
+        "Content-Type": "text/markdown; charset=utf-8",
+        "Cache-Control": "public, max-age=300",
+        "X-Markdown-Tokens": String(Math.ceil(md.length / 4)),
+      },
+    });
+  }),
+});
+
+cors.route({
+  path: "/api/v1/agents/:username/openapi.json",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const url = new URL(request.url);
+    const username = url.pathname.split("/")[4];
+    if (!username) {
+      return apiError(400, "invalid_request", "Username required");
+    }
+
+    const payload = await ctx.runQuery(api.functions.agentDocs.getDocsPayload, { username });
+    if (!payload) {
+      return apiError(404, "not_found", "Agent not found or profile hidden");
+    }
+
+    const { renderOpenApiJson } = await import("./functions/agentDocs");
+    const spec = renderOpenApiJson(payload);
+    return new Response(JSON.stringify(spec, null, 2), {
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "public, max-age=300",
+      },
+    });
+  }),
+});
+
+// ============================================================
 // Helpers
 // ============================================================
 
-function verifyWebhookSignature(
-  _body: string,
+// Stable API error envelope returned by all public endpoints
+function apiError(
+  status: number,
+  code: string,
+  message: string,
+  extra?: Record<string, unknown>
+): Response {
+  return new Response(
+    JSON.stringify({ error: { code, message, ...extra } }),
+    { status, headers: { "Content-Type": "application/json" } }
+  );
+}
+
+async function verifyWebhookSignature(
+  body: string,
   signature: string
-): boolean {
-  // TODO: Implement HMAC-SHA256 verification with AGENTMAIL_WEBHOOK_SECRET
-  // For now, check that signature exists (placeholder)
-  return signature.length > 0;
+): Promise<boolean> {
+  const secret = process.env.AGENTMAIL_WEBHOOK_SECRET;
+  if (!secret) return false;
+
+  const normalized = signature.trim().replace(/^sha256=/i, "");
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const digest = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body));
+  const expectedHex = bytesToHex(new Uint8Array(digest));
+
+  const providedHex = isHex(normalized)
+    ? normalized.toLowerCase()
+    : bytesToHex(decodeBase64(normalized));
+
+  if (!providedHex) return false;
+  return timingSafeEqualHex(expectedHex, providedHex);
+}
+
+function isHex(value: string): boolean {
+  return /^[0-9a-fA-F]+$/.test(value) && value.length % 2 === 0;
+}
+
+function decodeBase64(value: string): Uint8Array {
+  try {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  } catch {
+    return new Uint8Array();
+  }
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function timingSafeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) {
+    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return mismatch === 0;
+}
+
+function normalizeEmailAddress(value?: string): string {
+  if (!value) return "";
+  const trimmed = value.trim();
+  const bracketMatch = trimmed.match(/<([^>]+)>/);
+  return (bracketMatch?.[1] ?? trimmed).trim().toLowerCase();
+}
+
+function extractLocalPart(email: string): string {
+  const atIndex = email.indexOf("@");
+  if (atIndex <= 0) return "";
+  return email.slice(0, atIndex).trim().toLowerCase();
 }
 
 function escapeXml(text: string): string {

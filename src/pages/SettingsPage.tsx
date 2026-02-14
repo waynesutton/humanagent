@@ -39,11 +39,25 @@ const X_TWITTER_SERVICES = [
 
 type ProviderType = (typeof LLM_PROVIDERS)[number]["id"] | "custom";
 type IntegrationService = (typeof INTEGRATION_SERVICES)[number]["id"];
+type CredentialRow = {
+  service: string;
+  hasApiKey?: boolean;
+};
+type ApiKeyRow = {
+  _id: Id<"apiKeys">;
+  name: string;
+  keyPrefix: string;
+  scopes: Array<string>;
+  isActive: boolean;
+  lastUsedAt?: number;
+};
 
 export function SettingsPage() {
   const viewer = useQuery(api.functions.users.viewer);
-  const apiKeys = useQuery(api.functions.apiKeys.list);
-  const credentials = useQuery(api.functions.credentials.list);
+  const apiKeys = useQuery(api.functions.apiKeys.list) as ApiKeyRow[] | undefined;
+  const credentials = useQuery(api.functions.credentials.list) as
+    | CredentialRow[]
+    | undefined;
   const llmProviderStatus = useQuery(api.functions.credentials.getLLMProviderStatus);
   const updateSettings = useMutation(api.functions.users.updateSettings);
   const deleteAccount = useMutation(api.functions.users.deleteAccount);
@@ -55,12 +69,17 @@ export function SettingsPage() {
   const removeCredential = useMutation(api.functions.credentials.remove);
   const auth = getAuth();
 
+  const [username, setUsername] = useState("");
   const [name, setName] = useState("");
   const [bio, setBio] = useState("");
+  const [twitterProfile, setTwitterProfile] = useState("");
+  const [linkedinProfile, setLinkedinProfile] = useState("");
+  const [githubProfile, setGithubProfile] = useState("");
   const [llmProvider, setLlmProvider] = useState<ProviderType>("openrouter");
   const [llmModel, setLlmModel] = useState("anthropic/claude-sonnet-4");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [photoUploading, setPhotoUploading] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
@@ -75,6 +94,7 @@ export function SettingsPage() {
   const [privacyShowActivity, setPrivacyShowActivity] = useState(true);
   const [privacyShowTasks, setPrivacyShowTasks] = useState(true);
   const [privacyShowEndpoints, setPrivacyShowEndpoints] = useState(true);
+  const [privacyAllowAgentToAgent, setPrivacyAllowAgentToAgent] = useState(false);
 
   // BYOK form state
   const [showByokForm, setShowByokForm] = useState<string | null>(null);
@@ -91,8 +111,12 @@ export function SettingsPage() {
 
   useEffect(() => {
     if (viewer) {
+      setUsername(viewer.username || "");
       setName(viewer.name || "");
       setBio(viewer.bio || "");
+      setTwitterProfile(viewer.socialProfiles?.twitter || "");
+      setLinkedinProfile(viewer.socialProfiles?.linkedin || "");
+      setGithubProfile(viewer.socialProfiles?.github || "");
       setLlmProvider((viewer.llmConfig?.provider as ProviderType) || "openrouter");
       setLlmModel(viewer.llmConfig?.model || "anthropic/claude-sonnet-4");
 
@@ -105,6 +129,7 @@ export function SettingsPage() {
         showActivity?: boolean;
         showTasks?: boolean;
         showEndpoints?: boolean;
+        allowAgentToAgent?: boolean;
       }}).privacySettings;
       setPrivacyProfileVisible(privacy?.profileVisible ?? true);
       setPrivacyShowEmail(privacy?.showEmail ?? true);
@@ -113,15 +138,23 @@ export function SettingsPage() {
       setPrivacyShowActivity(privacy?.showActivity ?? true);
       setPrivacyShowTasks(privacy?.showTasks ?? true);
       setPrivacyShowEndpoints(privacy?.showEndpoints ?? true);
+      setPrivacyAllowAgentToAgent(privacy?.allowAgentToAgent ?? false);
     }
   }, [viewer]);
 
   async function handleSaveProfile() {
+    setSaveError(null);
     setSaving(true);
     try {
-      await updateSettings({
+      const payload = {
+        username: username.trim().toLowerCase() || undefined,
         name: name.trim() || undefined,
         bio: bio.trim() || undefined,
+        socialProfiles: {
+          twitter: twitterProfile.trim() || undefined,
+          linkedin: linkedinProfile.trim() || undefined,
+          github: githubProfile.trim() || undefined,
+        },
         llmProvider: llmProvider as "openrouter" | "anthropic" | "openai" | "google" | "mistral" | "minimax" | "kimi" | "xai" | "custom",
         llmModel,
         privacySettings: {
@@ -132,10 +165,38 @@ export function SettingsPage() {
           showActivity: privacyShowActivity,
           showTasks: privacyShowTasks,
           showEndpoints: privacyShowEndpoints,
+          allowAgentToAgent: privacyAllowAgentToAgent,
         },
-      });
+      };
+
+      try {
+        await updateSettings(payload);
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error ?? "");
+        // Backward-compatible fallback while Convex functions hot-reload/deploy.
+        if (errorMessage.includes("allowAgentToAgent")) {
+          await (updateSettings as (args: unknown) => Promise<unknown>)({
+            ...payload,
+            privacySettings: {
+              profileVisible: privacyProfileVisible,
+              showEmail: privacyShowEmail,
+              showPhone: privacyShowPhone,
+              showSkills: privacyShowSkills,
+              showActivity: privacyShowActivity,
+              showTasks: privacyShowTasks,
+              showEndpoints: privacyShowEndpoints,
+            },
+          });
+        } else {
+          throw error;
+        }
+      }
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
+      console.error("Failed to save settings:", error);
+      setSaveError(error instanceof Error ? error.message : "Could not save settings.");
     } finally {
       setSaving(false);
     }
@@ -236,7 +297,7 @@ export function SettingsPage() {
     }
   }
 
-  async function handleRevokeKey(keyId: NonNullable<typeof apiKeys>[number]["_id"]) {
+  async function handleRevokeKey(keyId: Id<"apiKeys">) {
     if (!confirm("Revoke this API key? This cannot be undone.")) return;
     await revokeApiKey({ keyId });
   }
@@ -336,12 +397,16 @@ export function SettingsPage() {
                 </label>
                 <input
                   type="text"
-                  value={viewer.username}
-                  disabled
-                  className="input mt-1.5 bg-surface-2 cursor-not-allowed"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="input mt-1.5"
+                  placeholder="your_username"
+                  pattern="[a-z0-9_]+"
+                  minLength={3}
+                  maxLength={30}
                 />
                 <p className="mt-1 text-xs text-ink-2">
-                  Username cannot be changed.
+                  Lowercase letters, numbers, and underscores only.
                 </p>
               </div>
               <div>
@@ -367,6 +432,77 @@ export function SettingsPage() {
                   rows={3}
                   placeholder="Tell people about yourself"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-ink-0">
+                  X profile
+                </label>
+                <input
+                  type="text"
+                  value={twitterProfile}
+                  onChange={(e) => setTwitterProfile(e.target.value)}
+                  className="input mt-1.5"
+                  placeholder="https://x.com/yourname or @yourname"
+                />
+                <p className="mt-1 text-xs text-ink-2">
+                  Paste @handle or full URL.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-ink-0">
+                  LinkedIn profile
+                </label>
+                <input
+                  type="text"
+                  value={linkedinProfile}
+                  onChange={(e) => setLinkedinProfile(e.target.value)}
+                  className="input mt-1.5"
+                  placeholder="https://linkedin.com/in/yourname"
+                />
+                <p className="mt-1 text-xs text-ink-2">
+                  Paste handle or full profile URL.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-ink-0">
+                  GitHub profile
+                </label>
+                <input
+                  type="text"
+                  value={githubProfile}
+                  onChange={(e) => setGithubProfile(e.target.value)}
+                  className="input mt-1.5"
+                  placeholder="https://github.com/yourname"
+                />
+                <p className="mt-1 text-xs text-ink-2">
+                  Paste @handle or full URL.
+                </p>
+              </div>
+              {saveError ? (
+                <p className="text-xs text-red-400">{saveError}</p>
+              ) : null}
+              <div className="flex justify-end">
+                <button
+                  onClick={handleSaveProfile}
+                  disabled={saving}
+                  className="btn-accent"
+                >
+                  {saving ? (
+                    <>
+                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                      Saving
+                    </>
+                  ) : saved ? (
+                    <>
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                      Saved
+                    </>
+                  ) : (
+                    "Save profile"
+                  )}
+                </button>
               </div>
             </div>
           </section>
@@ -474,6 +610,19 @@ export function SettingsPage() {
                       type="checkbox"
                       checked={privacyShowEndpoints}
                       onChange={(e) => setPrivacyShowEndpoints(e.target.checked)}
+                      className="h-4 w-4 rounded border-surface-3 text-accent focus:ring-accent"
+                    />
+                  </label>
+
+                  <label className="flex items-center justify-between">
+                    <div>
+                      <span className="text-sm font-medium text-ink-0">Allow agent to agent messages</span>
+                      <p className="text-xs text-ink-2">Allow public agents to message your public agents</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={privacyAllowAgentToAgent}
+                      onChange={(e) => setPrivacyAllowAgentToAgent(e.target.checked)}
                       className="h-4 w-4 rounded border-surface-3 text-accent focus:ring-accent"
                     />
                   </label>

@@ -147,14 +147,14 @@ export function FeedPage() {
             </div>
           ) : (
             <div className="border border-surface-3 bg-surface-0">
-              {feedItems.map((item) => (
+              {feedItems.map((item: FeedItem) => (
                 <FeedTimelineItem
                   key={item._id}
-                  item={item as FeedItem}
+                  item={item}
                   actorName={viewer?.name ?? viewer?.username ?? "You"}
                   actorUsername={viewer?.username ?? "you"}
                   actorImage={viewer?.image}
-                  visibility={(item as FeedItem).isPublic ? "public" : "private"}
+                  visibility={item.isPublic ? "public" : "private"}
                 />
               ))}
             </div>

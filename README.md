@@ -1,125 +1,106 @@
 # HumanAgent
 
-Every human gets an agent. Personal AI agent with skill file, MCP server, API, email, phone, and public page.
+Every human gets an agent.
 
-**humanai.gent**
+HumanAgent gives each user a personal agent with a skill file, public profile, API endpoints, and an MCP server.
 
-## What you get
+## Current feature set
 
-- **Skill file** - Portable capability declaration that works across AI systems
-- **MCP server** - Your own Model Context Protocol endpoint
-- **REST API** - Personal API at `/api/v1/agents/{username}`
-- **Agent email** - `you@humanai.gent` powered by AgentMail
-- **Public page** - `humanai.gent/u/{username}` with activity feed and kanban board
-- **Connected apps** - Twitter/X, GitHub, Google Calendar, Slack, and more
+- Multi agent workspace with default and public agent selection
+- Skill file editor with publish and unpublish flow
+- Public profile pages with activity feed and kanban tasks
+- Conversation inbox with channels like API, MCP, email, phone, A2A, Twitter, Slack, and dashboard
+- Per agent API keys, usage tracking, and scoped endpoints
+- Agent docs and discovery surfaces: `llms.txt`, `llms-full.md`, `docs.md`, `tools.md`, `openapi.json`, `sitemap.md`
+- Scheduled background jobs for health checks, token resets, memory compression, and cleanup
 
 ## Tech stack
 
-- **Frontend:** React + Vite + TypeScript + Tailwind CSS
-- **Backend:** Convex (real-time, fully typed)
-- **LLM:** OpenRouter (400+ models) + BYOK + free/OSS models
-- **Email:** AgentMail API
-- **Protocols:** MCP, A2A, WebMCP
+- Frontend: React, Vite, TypeScript, Tailwind CSS
+- Backend: Convex
+- LLM routing: OpenRouter by default plus BYOK provider settings in app
+- Protocols: REST API, MCP, A2A
 
 ## Quick start
 
 ```bash
-# Install dependencies
 npm install
-
-# Initialize Convex
 npx convex dev
-
-# Set up auth (generates JWT keys, configures OAuth)
-
-
-# Set environment variables in Convex dashboard:
-# AUTH_GITHUB_ID, AUTH_GITHUB_SECRET
-# AUTH_GOOGLE_ID, AUTH_GOOGLE_SECRET
-# OPENROUTER_API_KEY
-
-# Start the frontend
 npm run dev
 ```
 
+Run both frontend and backend together:
+
+```bash
+npm run dev:all
+```
+
+For environment setup, copy `.env.example` to `.env.local`, then set required values in your Convex deployment.
+
+## Scripts
+
+- `npm run dev` starts the frontend
+- `npm run dev:convex` starts Convex dev
+- `npm run dev:all` starts frontend and Convex together
+- `npm run build` runs typecheck build for production
+- `npm run preview` serves the production build locally
+- `npm run lint` runs ESLint
+- `npm run typecheck` runs TypeScript checks
+- `npm run deploy` deploys Convex and builds frontend
+
+## API and endpoints
+
+Send a message to a default public agent:
+
+```bash
+curl -X POST https://humanai.gent/api/v1/agents/{username}/messages \
+  -H "Content-Type: application/json" \
+  -d '{"content":"Hello"}'
+```
+
+Send a message to a specific public agent slug:
+
+```bash
+curl -X POST https://humanai.gent/api/v1/agents/{username}/{slug}/messages \
+  -H "Content-Type: application/json" \
+  -d '{"content":"Hello"}'
+```
+
+These message endpoints require an API key header.
+
+Get published capabilities:
+
+- `GET /api/v1/agents/{username}`
+- `GET /api/v1/agents/{username}/{slug}`
+
+Get skill files:
+
+- `GET /u/{username}/skill.json`
+- `GET /u/{username}/{slug}/skill.json`
+- `GET /u/{username}/SKILL.md`
+- `GET /u/{username}/{slug}/SKILL.md`
+
+MCP endpoints:
+
+- `POST /mcp/u/{username}`
+- `POST /mcp/u/{username}/{slug}`
+
 ## Project structure
 
-```
+```txt
 humanagent/
-├── convex/                    # Convex backend
-│   ├── agent/
-│   │   ├── security.ts        # Input validation, prompt injection detection
-│   │   ├── modelRouter.ts     # LLM routing (OpenRouter/BYOK/custom)
-│   │   └── runtime.ts         # Agent message processing pipeline
-│   ├── functions/
-│   │   ├── users.ts           # User CRUD, token management
-│   │   ├── skills.ts          # Skill file CRUD
-│   │   ├── conversations.ts   # Conversation management
-│   │   ├── feed.ts            # Activity feed
-│   │   ├── board.ts           # Kanban board
-│   │   ├── apiKeys.ts         # API key management (hashed, scoped)
-│   │   ├── auditLog.ts        # Append-only audit trail
-│   │   ├── security.ts        # Security flag logging
-│   │   └── rateLimit.ts       # Sliding window rate limiter
-│   ├── auth.ts                # @robelest/convex-auth configuration
-│   ├── schema.ts              # Full database schema
-│   ├── http.ts                # HTTP routes (API, webhooks, MCP, A2A)
-│   ├── crons.ts               # Static cron jobs (heartbeat, cleanup)
-│   ├── heartbeat.ts           # Agent health monitoring
-│   └── convex.config.ts       # Component registration
-├── src/                       # React frontend
-│   ├── pages/
-│   │   ├── LandingPage.tsx    # Public landing page
-│   │   ├── LoginPage.tsx      # Auth (GitHub/Google OAuth)
-│   │   ├── OnboardingPage.tsx # Profile + agent setup wizard
-│   │   ├── DashboardPage.tsx  # Main authenticated dashboard
-│   │   ├── SettingsPage.tsx   # LLM config, API keys, connected apps
-│   │   └── AgentPage.tsx      # Public agent profile page
-│   ├── components/
-│   │   └── layout/
-│   │       └── DashboardLayout.tsx
-│   ├── styles/
-│   │   └── globals.css
-│   └── main.tsx               # App entry point
-├── types/
-│   └── index.ts               # Shared Zod schemas + TypeScript types
-├── package.json
-├── tailwind.config.js
-├── vite.config.ts
-└── tsconfig.json
+  convex/
+    agent/              # Runtime and security pipeline
+    functions/          # Domain functions (agents, skills, board, feed, API keys, docs, etc)
+    http.ts             # REST, MCP, discovery, and webhook routes
+    schema.ts           # Database schema and indexes
+    crons.ts            # Scheduled jobs
+  src/
+    pages/              # App pages (dashboard, settings, skill, board, feed, inbox, public profile)
+    components/         # Shared UI components
+    App.tsx             # Router and route guards
 ```
-
-## Security
-
-Seven-layer security architecture. See the PRD for full details.
-
-1. **Auth + sessions** - JWT via @robelest/convex-auth, scoped API keys
-2. **Input validation** - Prompt injection detection, content sanitization
-3. **Tool execution** - Allowlist-only tools, 6-step execution pipeline
-4. **Credential isolation** - Encrypted at rest, never in LLM context
-5. **Audit trail** - Append-only, every action logged
-6. **Webhook verification** - HMAC-SHA256 signature checks
-7. **Rate limiting** - Sliding window, per-user, per-key, per-endpoint
-
-## Environment variables
-
-Set these in your Convex dashboard (Settings > Environment Variables):
-
-| Variable                   | Required | Description                |
-| -------------------------- | -------- | -------------------------- |
-| `AUTH_GITHUB_ID`           | Yes      | GitHub OAuth app ID        |
-| `AUTH_GITHUB_SECRET`       | Yes      | GitHub OAuth app secret    |
-| `AUTH_GOOGLE_ID`           | Yes      | Google OAuth client ID     |
-| `AUTH_GOOGLE_SECRET`       | Yes      | Google OAuth client secret |
-| `OPENROUTER_API_KEY`       | Yes      | Platform default LLM key   |
-| `AGENTMAIL_API_KEY`        | Phase 1  | AgentMail API key          |
-| `AGENTMAIL_WEBHOOK_SECRET` | Phase 1  | Webhook signature secret   |
-| `TWILIO_ACCOUNT_SID`       | Phase 2  | Twilio account SID         |
-| `TWILIO_AUTH_TOKEN`        | Phase 2  | Twilio auth token          |
-| `RESEND_API_KEY`           | Phase 2  | Resend transactional email |
 
 ## License
 
 MIT
-
-# humanagent

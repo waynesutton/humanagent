@@ -23,6 +23,13 @@ export default defineSchema({
     email: v.optional(v.string()),
     image: v.optional(v.string()),
     bio: v.optional(v.string()),
+    socialProfiles: v.optional(
+      v.object({
+        twitter: v.optional(v.string()),
+        linkedin: v.optional(v.string()),
+        github: v.optional(v.string()),
+      })
+    ),
     onboardingComplete: v.boolean(),
     // Default LLM config (used when agent doesn't have its own)
     llmConfig: v.object({
@@ -42,6 +49,7 @@ export default defineSchema({
         showActivity: v.boolean(), // Show activity feed on public profile
         showTasks: v.boolean(), // Show public tasks on profile
         showEndpoints: v.boolean(), // Show API/MCP endpoints
+        allowAgentToAgent: v.optional(v.boolean()), // Allow public agents to receive A2A messages
         profileVisible: v.boolean(), // Master toggle for entire profile
       })
     ),
@@ -130,11 +138,18 @@ export default defineSchema({
         nextRun: v.optional(v.number()), // Timestamp of next scheduled run
       })
     ),
+    // Denormalized scheduling fields to support indexed cron lookups.
+    schedulingActive: v.optional(v.boolean()),
+    schedulingMode: v.optional(
+      v.union(v.literal("manual"), v.literal("auto"), v.literal("cron"))
+    ),
     // Agent-to-agent communication controls
     a2aConfig: v.optional(
       v.object({
         enabled: v.boolean(), // Whether this agent can participate in A2A
         allowPublicAgents: v.boolean(), // Whether unknown public agents can message this agent
+        autoRespond: v.optional(v.boolean()), // Whether this agent auto-responds to inbound A2A
+        maxAutoReplyHops: v.optional(v.number()), // Loop guard for chained agent replies
       })
     ),
     // Agent thinking: allows agent to plan and decide what to do next
@@ -210,7 +225,10 @@ export default defineSchema({
   })
     .index("by_userId", ["userId"])
     .index("by_userId_slug", ["userId", "slug"])
-    .index("by_userId_default", ["userId", "isDefault"]),
+    .index("by_userId_default", ["userId", "isDefault"])
+    .index("by_agentPhone", ["agentPhone"])
+    .index("by_agentEmail", ["agentEmail"])
+    .index("by_schedulingActive_mode", ["schedulingActive", "schedulingMode"]),
 
   // Encrypted credentials for BYOK (stored per user, can be used by any agent)
   userCredentials: defineTable({

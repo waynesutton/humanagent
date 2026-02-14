@@ -133,6 +133,16 @@ export function DashboardPage() {
                 label="Private board"
                 description="View and manage tasks privately"
               />
+              <QuickAction
+                href="/a2a"
+                icon={
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3.75h5.25m7.125 6.75H4.125A2.625 2.625 0 011.5 16.125V6.375A2.625 2.625 0 014.125 3.75h15.75A2.625 2.625 0 0122.5 6.375v9.75a2.625 2.625 0 01-2.625 2.625z" />
+                  </svg>
+                }
+                label="A2A inbox"
+                description="Monitor agent to agent threads"
+              />
             </div>
           </div>
 
@@ -189,8 +199,8 @@ export function DashboardPage() {
             />
             <EndpointCard
               title="MCP Server"
-              value={`mcp.humanai.gent/${viewer.username}`}
-              copyValue={`https://mcp.humanai.gent/${viewer.username}`}
+              value={`humanai.gent/mcp/u/${viewer.username}`}
+              copyValue={`https://humanai.gent/mcp/u/${viewer.username}`}
             />
           </div>
         </div>

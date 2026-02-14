@@ -71,6 +71,10 @@ export function AgentsPage() {
   const [editConnectShowMcp, setEditConnectShowMcp] = useState(true);
   const [editConnectShowEmail, setEditConnectShowEmail] = useState(true);
   const [editConnectShowSkillFile, setEditConnectShowSkillFile] = useState(true);
+  const [editA2aEnabled, setEditA2aEnabled] = useState(false);
+  const [editA2aAllowPublicAgents, setEditA2aAllowPublicAgents] = useState(false);
+  const [editA2aAutoRespond, setEditA2aAutoRespond] = useState(true);
+  const [editA2aMaxAutoReplyHops, setEditA2aMaxAutoReplyHops] = useState(2);
   const [editProvider, setEditProvider] = useState<ProviderType>("openrouter");
   const [editModel, setEditModel] = useState("");
   const [editAgentEmail, setEditAgentEmail] = useState("");
@@ -190,6 +194,18 @@ export function AgentsPage() {
     setEditConnectShowMcp(publicConnect?.showMcp ?? true);
     setEditConnectShowEmail(publicConnect?.showEmail ?? true);
     setEditConnectShowSkillFile(publicConnect?.showSkillFile ?? true);
+    const a2aConfig = (agent as {
+      a2aConfig?: {
+        enabled?: boolean;
+        allowPublicAgents?: boolean;
+        autoRespond?: boolean;
+        maxAutoReplyHops?: number;
+      };
+    }).a2aConfig;
+    setEditA2aEnabled(a2aConfig?.enabled ?? false);
+    setEditA2aAllowPublicAgents(a2aConfig?.allowPublicAgents ?? false);
+    setEditA2aAutoRespond(a2aConfig?.autoRespond ?? true);
+    setEditA2aMaxAutoReplyHops(a2aConfig?.maxAutoReplyHops ?? 2);
     setEditProvider((agent.llmConfig?.provider as ProviderType) || "openrouter");
     setEditModel(agent.llmConfig?.model || "anthropic/claude-sonnet-4");
     setEditAgentEmail(agent.agentEmail || "");
@@ -254,6 +270,12 @@ export function AgentsPage() {
           showMcp: editConnectShowMcp,
           showEmail: editConnectShowEmail,
           showSkillFile: editConnectShowSkillFile,
+        },
+        a2aConfig: {
+          enabled: editA2aEnabled,
+          allowPublicAgents: editA2aAllowPublicAgents,
+          autoRespond: editA2aAutoRespond,
+          maxAutoReplyHops: Math.max(0, Math.min(8, editA2aMaxAutoReplyHops)),
         },
         llmConfig: {
           provider: editProvider,
@@ -658,6 +680,60 @@ export function AgentsPage() {
                           />
                           <span className="text-sm text-ink-0">Show skill file</span>
                         </label>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-surface-3 bg-surface-1 p-4">
+                      <h4 className="text-sm font-medium text-ink-0">Agent to agent settings</h4>
+                      <p className="text-xs text-ink-2 mt-0.5">
+                        Configure whether this agent can participate in agent to agent conversations.
+                      </p>
+                      <div className="mt-3 space-y-3">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={editA2aEnabled}
+                            onChange={(e) => setEditA2aEnabled(e.target.checked)}
+                            className="h-4 w-4 rounded border-surface-3 text-accent focus:ring-accent"
+                          />
+                          <span className="text-sm text-ink-0">Enable agent to agent messaging</span>
+                        </label>
+                        {editA2aEnabled && (
+                          <>
+                            <label className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={editA2aAllowPublicAgents}
+                                onChange={(e) => setEditA2aAllowPublicAgents(e.target.checked)}
+                                className="h-4 w-4 rounded border-surface-3 text-accent focus:ring-accent"
+                              />
+                              <span className="text-sm text-ink-0">Allow public external agents to initiate conversations</span>
+                            </label>
+                            <label className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={editA2aAutoRespond}
+                                onChange={(e) => setEditA2aAutoRespond(e.target.checked)}
+                                className="h-4 w-4 rounded border-surface-3 text-accent focus:ring-accent"
+                              />
+                              <span className="text-sm text-ink-0">Auto respond to inbound agent messages</span>
+                            </label>
+                            <div>
+                              <label className="block text-sm text-ink-1">Max auto reply hops</label>
+                              <input
+                                type="number"
+                                min={0}
+                                max={8}
+                                value={editA2aMaxAutoReplyHops}
+                                onChange={(e) => setEditA2aMaxAutoReplyHops(Number(e.target.value || 0))}
+                                className="input mt-1 w-28"
+                              />
+                              <p className="mt-1 text-xs text-ink-2">
+                                Prevents infinite loops by capping nested agent handoffs.
+                              </p>
+                            </div>
+                          </>
+                        )}
                       </div>
                     </div>
 

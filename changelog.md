@@ -3,6 +3,56 @@
 All notable changes to HumanAgent are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.2] - 2026-02-14
+
+### Added
+
+- Agent discovery docs: `/{username}/sitemap.md`, `/api/v1/agents/{username}/docs.md`, `/api/v1/agents/{username}/tools.md`, `/api/v1/agents/{username}/openapi.json`
+- Shared contract builder module (`convex/functions/agentDocs.ts`) for rendering docs/tools/openapi/sitemap from a single query
+- Content negotiation: `Vary: Accept` and `Cache-Control` headers on all negotiated GET endpoints
+- `X-Markdown-Tokens` header on all markdown responses for token budget estimation
+- Discovery endpoint cards (API Docs, Tools Docs, OpenAPI, Sitemap) on public agent and user profile pages
+
+### Changed
+
+- Public API message endpoints now fail closed on invalid API keys (returns 401 instead of proceeding as anonymous)
+- All API error responses use stable envelope format: `{ "error": { "code": "...", "message": "..." } }`
+- llms.txt and llms-full.md generation now respects `publicConnect` visibility flags and user `privacySettings`
+- Agent email, phone, API, MCP, and skill file links are conditionally included in llms outputs based on per-agent and per-user privacy settings
+
+### Fixed
+
+- Security gap where an invalid API key would allow message processing with "anonymous" caller identity
+- Restored clean TypeScript build by removing an unused import in `convex/functions/agentDocs.ts` (`npm run typecheck` passes)
+- Enforced AgentMail webhook signature verification with HMAC-SHA256 validation against `AGENTMAIL_WEBHOOK_SECRET`
+- Aligned dashboard MCP endpoint display with actual route format (`https://humanai.gent/mcp/u/{username}`)
+- Synced docs inventory in `files.md` with current A2A files and `TASK.md`
+- Added explicit `returns` validators across core Convex function modules (`agents`, `users`, `skills`, `board`, `feed`, `apiKeys`, `conversations`, `agentDocs`, `llmsTxt`)
+- Added `agents` indexes for `agentPhone` and `agentEmail`, and updated internal webhook lookups to indexed queries
+- Removed full table scan in scheduled-agent lookup by adding indexed scheduling fields (`schedulingActive`, `schedulingMode`) and querying via `by_schedulingActive_mode`
+- Added a backwards-compatible legacy fallback path for scheduled agents that predate scheduling denormalization fields
+
+## [0.3.1] - 2026-02-14
+
+### Added
+
+- Settings profile now supports editable username with server-side validation and uniqueness checks
+- Added social profile fields in settings for X/Twitter, LinkedIn, and GitHub
+- Added profile-level save action in the profile card using existing button styles
+- Added helper text under social inputs clarifying handle and URL input formats
+
+### Changed
+
+- `users.socialProfiles` is now part of the schema for storing social links on user profiles
+- Public user profile social links now merge user-defined links with connected app links
+- Social profile input values are normalized on save into canonical URLs (X, LinkedIn, GitHub)
+
+### Fixed
+
+- Resolved TypeScript errors in `convex/functions/agentThinking.ts` by aligning auth user lookup with `users.by_authUserId`
+- Resolved TypeScript inference and internal action typing errors in `convex/functions/xTwitter.ts`
+- Resolved implicit `any` issues in `src/pages/FeedPage.tsx` and `src/pages/SkillFilePage.tsx`
+
 ## [0.3.0] - 2026-02-14
 
 ### Added

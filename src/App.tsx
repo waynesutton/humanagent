@@ -13,6 +13,7 @@ import { FeedPage } from "./pages/FeedPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { AgentsPage } from "./pages/AgentsPage";
 import { InboxPage } from "./pages/InboxPage";
+import { A2AInboxPage } from "./pages/A2AInboxPage";
 import { PublicUserProfilePage } from "./pages/PublicUserProfilePage.tsx";
 
 /**
@@ -135,6 +136,15 @@ export default function App() {
         element={
           <AuthRequired>
             <InboxPage />
+          </AuthRequired>
+        }
+      />
+
+      <Route
+        path="/a2a"
+        element={
+          <AuthRequired>
+            <A2AInboxPage />
           </AuthRequired>
         }
       />

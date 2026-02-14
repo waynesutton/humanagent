@@ -543,6 +543,43 @@ export function PublicAgentPage() {
                         </svg>
                       }
                     />
+                    <EndpointCard
+                      title="API Docs"
+                      value={`humanai.gent/api/v1/agents/${normalizedUsername}/docs.md`}
+                      icon={
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                        </svg>
+                      }
+                    />
+                    <EndpointCard
+                      title="Tools Docs"
+                      value={`humanai.gent/api/v1/agents/${normalizedUsername}/tools.md`}
+                      icon={
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17l-5.384-3.19A.75.75 0 015 11.298V7.023a.75.75 0 011.036-.692l5.384 3.19a.75.75 0 01.036 1.318l-5.384 3.19a.75.75 0 01-1.036-.692V9.858" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M14.58 15.17l5.384-3.19A.75.75 0 0021 11.298V7.023a.75.75 0 00-1.036-.692l-5.384 3.19" />
+                        </svg>
+                      }
+                    />
+                    <EndpointCard
+                      title="OpenAPI Spec"
+                      value={`humanai.gent/api/v1/agents/${normalizedUsername}/openapi.json`}
+                      icon={
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5" />
+                        </svg>
+                      }
+                    />
+                    <EndpointCard
+                      title="Sitemap"
+                      value={`humanai.gent/${normalizedUsername}/sitemap.md`}
+                      icon={
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75V15m0 0l3-3m-3 3l-3-3M15 6.75V15m0 0l3-3m-3 3l-3-3" />
+                        </svg>
+                      }
+                    />
                   </div>
                 </div>
 

@@ -24,9 +24,101 @@ interface Skill {
   isActive?: boolean; // Optional for backwards compatibility
 }
 
+interface AgentOption {
+  _id: Id<"agents">;
+  name: string;
+}
+
+type ImportMode = "url" | "text" | "file";
+type ImportPayload = { source: string; payload: string };
+
+function parseGitHubRepoUrl(url: string): { owner: string; repo: string } | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname !== "github.com") return null;
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (parts.length < 2) return null;
+    if (parts[2] === "blob" || parts[2] === "raw" || parts[2] === "tree") return null;
+    return { owner: parts[0]!, repo: parts[1]! };
+  } catch {
+    return null;
+  }
+}
+
+function toRawGitHubUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === "raw.githubusercontent.com") return url;
+    if (parsed.hostname !== "github.com") return url;
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (parts.length >= 5 && parts[2] === "blob") {
+      const owner = parts[0];
+      const repo = parts[1];
+      const branch = parts[3];
+      const path = parts.slice(4).join("/");
+      return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
+    }
+    return url;
+  } catch {
+    return url;
+  }
+}
+
+async function loadSkillPayloadsFromUrl(inputUrl: string): Promise<ImportPayload[]> {
+  const trimmed = inputUrl.trim();
+  if (!trimmed) throw new Error("URL is required");
+
+  if (trimmed.includes("skills.sh")) {
+    const html = await fetch(trimmed).then((res) => {
+      if (!res.ok) throw new Error("Could not load skills.sh page");
+      return res.text();
+    });
+    const githubLink = html.match(/https:\/\/github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+/i)?.[0];
+    if (!githubLink) throw new Error("No GitHub repository found in skills.sh page");
+    return loadSkillPayloadsFromUrl(githubLink);
+  }
+
+  const repoMatch = parseGitHubRepoUrl(trimmed);
+  if (repoMatch) {
+    const treeUrl = `https://api.github.com/repos/${repoMatch.owner}/${repoMatch.repo}/git/trees/HEAD?recursive=1`;
+    const tree = await fetch(treeUrl).then((res) => {
+      if (!res.ok) throw new Error("Could not read GitHub repository tree");
+      return res.json() as Promise<{ tree?: Array<{ path: string; type: string }> }>;
+    });
+    const files = (tree.tree ?? [])
+      .filter((entry) => entry.type === "blob")
+      .map((entry) => entry.path)
+      .filter((path) => /(^|\/)SKILL\.md$/i.test(path) || /(^|\/)skills\/.*\.md$/i.test(path))
+      .slice(0, 20);
+
+    if (files.length === 0) {
+      throw new Error("No SKILL.md files found in repository");
+    }
+
+    const loaded = await Promise.all(
+      files.map(async (path) => {
+        const rawUrl = `https://raw.githubusercontent.com/${repoMatch.owner}/${repoMatch.repo}/HEAD/${path}`;
+        const payload = await fetch(rawUrl).then((res) => {
+          if (!res.ok) throw new Error(`Could not load ${path}`);
+          return res.text();
+        });
+        return { source: rawUrl, payload };
+      })
+    );
+    return loaded;
+  }
+
+  const singleUrl = toRawGitHubUrl(trimmed);
+  const payload = await fetch(singleUrl).then((res) => {
+    if (!res.ok) throw new Error("Could not load import URL");
+    return res.text();
+  });
+  return [{ source: singleUrl, payload }];
+}
+
 export function SkillFilePage() {
   // Queries
-  const agents = useQuery(api.functions.agents.list);
+  const agents = useQuery(api.functions.agents.list) as AgentOption[] | undefined;
   const viewer = useQuery(api.functions.users.viewer);
 
   // State for agent/skill selection
@@ -46,6 +138,7 @@ export function SkillFilePage() {
   const publishSkill = useMutation(api.functions.skills.publish);
   const unpublishSkill = useMutation(api.functions.skills.unpublish);
   const assignToAgent = useMutation(api.functions.skills.assignToAgent);
+  const importSkills = useMutation(api.functions.skills.importSkills);
 
   // Get current skill
   const currentSkill = skills?.find((s: Skill) => s._id === selectedSkillId) ?? skills?.[0];
@@ -55,6 +148,7 @@ export function SkillFilePage() {
   const [bio, setBio] = useState("");
   const [timezone, setTimezone] = useState("America/Los_Angeles");
   const [tone, setTone] = useState("friendly and professional");
+  const [customTone, setCustomTone] = useState("");
   const [availability, setAvailability] = useState("available");
   const [capabilities, setCapabilities] = useState<Capability[]>([]);
   const [domains, setDomains] = useState<string[]>([]);
@@ -62,9 +156,18 @@ export function SkillFilePage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showImportForm, setShowImportForm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [newSkillName, setNewSkillName] = useState("");
   const [newSkillBio, setNewSkillBio] = useState("");
   const [createForAgent, setCreateForAgent] = useState<Id<"agents"> | undefined>(undefined);
+  const [importMode, setImportMode] = useState<ImportMode>("url");
+  const [importUrl, setImportUrl] = useState("");
+  const [importText, setImportText] = useState("");
+  const [importFiles, setImportFiles] = useState<File[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
 
   // Load skill data into form when currentSkill changes
   useEffect(() => {
@@ -72,7 +175,16 @@ export function SkillFilePage() {
       setName(currentSkill.identity.name || "");
       setBio(currentSkill.identity.bio || "");
       setTimezone(currentSkill.communicationPrefs?.timezone || "America/Los_Angeles");
-      setTone(currentSkill.communicationPrefs?.tone || "friendly and professional");
+      // Detect if the saved tone is a preset or custom value
+      const savedTone = currentSkill.communicationPrefs?.tone || "friendly and professional";
+      const presetTones = ["friendly and professional", "formal", "casual", "technical", "concise"];
+      if (presetTones.includes(savedTone)) {
+        setTone(savedTone);
+        setCustomTone("");
+      } else {
+        setTone("custom");
+        setCustomTone(savedTone);
+      }
       setAvailability(currentSkill.communicationPrefs?.availability || "available");
       setCapabilities(currentSkill.capabilities || []);
       setDomains(currentSkill.knowledgeDomains || []);
@@ -94,7 +206,11 @@ export function SkillFilePage() {
         identity: { name, bio },
         capabilities,
         knowledgeDomains: domains,
-        communicationPrefs: { tone, timezone, availability },
+        communicationPrefs: {
+          tone: tone === "custom" ? customTone : tone,
+          timezone,
+          availability,
+        },
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -132,14 +248,69 @@ export function SkillFilePage() {
 
   async function handleDeleteSkill() {
     if (!currentSkill) return;
-    if (!confirm("Delete this skill? This cannot be undone.")) return;
     await removeSkill({ skillId: currentSkill._id });
     setSelectedSkillId(undefined);
+    setShowDeleteConfirm(false);
   }
 
   async function handleAssignToAgent(agentId: Id<"agents"> | null) {
     if (!currentSkill) return;
     await assignToAgent({ skillId: currentSkill._id, agentId });
+  }
+
+  async function handleToggleActive() {
+    if (!currentSkill) return;
+    const next = currentSkill.isActive === false;
+    await updateSkill({ skillId: currentSkill._id, isActive: next });
+  }
+
+  async function handleImportSkills() {
+    setImporting(true);
+    setImportMessage(null);
+    setImportWarnings([]);
+
+    try {
+      let payloads: ImportPayload[] = [];
+      if (importMode === "text") {
+        if (!importText.trim()) throw new Error("Paste JSON or markdown to import");
+        payloads = [{ source: "manual_text", payload: importText }];
+      } else if (importMode === "url") {
+        payloads = await loadSkillPayloadsFromUrl(importUrl);
+      } else {
+        if (importFiles.length === 0) throw new Error("Choose one or more files to import");
+        payloads = await Promise.all(
+          importFiles.map(async (file) => ({
+            source: `file:${file.name}`,
+            payload: await file.text(),
+          }))
+        );
+      }
+
+      let totalImported = 0;
+      const warnings: string[] = [];
+      for (const item of payloads) {
+        const result = await importSkills({
+          source: item.source,
+          payload: item.payload,
+          agentId: createForAgent,
+          defaultIsActive: true,
+        });
+        totalImported += result.importedCount;
+        warnings.push(...result.warnings);
+      }
+
+      setImportWarnings(warnings);
+      setImportMessage(`Imported ${totalImported} skill${totalImported === 1 ? "" : "s"} successfully.`);
+      setShowImportForm(false);
+      setImportUrl("");
+      setImportText("");
+      setImportFiles([]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Import failed";
+      setImportMessage(message);
+    } finally {
+      setImporting(false);
+    }
   }
 
   function addCapability() {
@@ -192,16 +363,29 @@ export function SkillFilePage() {
               Define what your agents know and can do.
             </p>
           </div>
-          <button
-            onClick={() => setShowCreateForm(true)}
-            className="btn-accent"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            New skill
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowImportForm(true)} className="btn-secondary">
+              Import
+            </button>
+            <button onClick={() => setShowCreateForm(true)} className="btn-accent">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              New skill
+            </button>
+          </div>
         </div>
+
+        {importMessage && (
+          <div className="mt-4 rounded-lg border border-surface-3 bg-surface-1 px-4 py-3 text-sm text-ink-0">
+            {importMessage}
+            {importWarnings.length > 0 && (
+              <div className="mt-2 text-xs text-ink-1">
+                {importWarnings.slice(0, 3).join(" ")}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Create skill modal */}
         {showCreateForm && (
@@ -237,7 +421,7 @@ export function SkillFilePage() {
                     className="input mt-1.5"
                   >
                     <option value="">No agent (unassigned)</option>
-                    {agents.map((agent) => (
+                    {agents.map((agent: AgentOption) => (
                       <option key={agent._id} value={agent._id}>{agent.name}</option>
                     ))}
                   </select>
@@ -247,6 +431,106 @@ export function SkillFilePage() {
                 <button onClick={() => setShowCreateForm(false)} className="btn-secondary">Cancel</button>
                 <button onClick={handleCreateSkill} disabled={!newSkillName.trim() || saving} className="btn-accent">
                   {saving ? "Creating..." : "Create skill"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Import skill modal */}
+        {showImportForm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+            <div className="card w-full max-w-2xl mx-4">
+              <h2 className="font-semibold text-ink-0">Import skills</h2>
+              <p className="mt-1 text-sm text-ink-1">
+                Import from GitHub, skills.sh links, anthropics skills repos, JSON, markdown, or local files.
+              </p>
+
+              <div className="mt-4 flex gap-2">
+                <button
+                  onClick={() => setImportMode("url")}
+                  className={`btn-secondary ${importMode === "url" ? "border-accent text-ink-0" : ""}`}
+                >
+                  URL
+                </button>
+                <button
+                  onClick={() => setImportMode("text")}
+                  className={`btn-secondary ${importMode === "text" ? "border-accent text-ink-0" : ""}`}
+                >
+                  Paste text
+                </button>
+                <button
+                  onClick={() => setImportMode("file")}
+                  className={`btn-secondary ${importMode === "file" ? "border-accent text-ink-0" : ""}`}
+                >
+                  Files
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-4">
+                {importMode === "url" && (
+                  <div>
+                    <label className="block text-sm font-medium text-ink-0">Import URL</label>
+                    <input
+                      type="url"
+                      value={importUrl}
+                      onChange={(e) => setImportUrl(e.target.value)}
+                      className="input mt-1.5"
+                      placeholder="https://github.com/anthropics/skills"
+                    />
+                    <p className="mt-1 text-xs text-ink-2">
+                      Repository URLs import matching SKILL.md files. File URLs import a single skill.
+                    </p>
+                  </div>
+                )}
+
+                {importMode === "text" && (
+                  <div>
+                    <label className="block text-sm font-medium text-ink-0">Skill JSON or markdown</label>
+                    <textarea
+                      value={importText}
+                      onChange={(e) => setImportText(e.target.value)}
+                      className="input mt-1.5 min-h-48 resize-y font-mono text-sm"
+                      placeholder="Paste SKILL.md or JSON skill payload"
+                    />
+                  </div>
+                )}
+
+                {importMode === "file" && (
+                  <div>
+                    <label className="block text-sm font-medium text-ink-0">Upload files</label>
+                    <input
+                      type="file"
+                      accept=".md,.json,text/markdown,application/json"
+                      multiple
+                      onChange={(e) => setImportFiles(Array.from(e.target.files ?? []))}
+                      className="input mt-1.5"
+                    />
+                    <p className="mt-1 text-xs text-ink-2">Supports .md and .json files.</p>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-sm font-medium text-ink-0">Assign imported skills to agent (optional)</label>
+                  <select
+                    value={createForAgent ?? ""}
+                    onChange={(e) => setCreateForAgent(e.target.value ? e.target.value as Id<"agents"> : undefined)}
+                    className="input mt-1.5"
+                  >
+                    <option value="">No agent (unassigned)</option>
+                    {agents.map((agent: AgentOption) => (
+                      <option key={agent._id} value={agent._id}>{agent.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="mt-6 flex justify-end gap-3">
+                <button onClick={() => setShowImportForm(false)} className="btn-secondary">
+                  Cancel
+                </button>
+                <button onClick={handleImportSkills} disabled={importing} className="btn-accent">
+                  {importing ? "Importing..." : "Import"}
                 </button>
               </div>
             </div>
@@ -265,7 +549,7 @@ export function SkillFilePage() {
                 className="input"
               >
                 <option value="all">All skills</option>
-                {agents.map((agent) => (
+                {agents.map((agent: AgentOption) => (
                   <option key={agent._id} value={agent._id}>{agent.name}</option>
                 ))}
               </select>
@@ -278,7 +562,7 @@ export function SkillFilePage() {
                 </div>
               ) : (
                 skills.map((skill: Skill) => {
-                  const agentName = agents.find((a) => a._id === skill.agentId)?.name;
+                  const agentName = agents.find((a: AgentOption) => a._id === skill.agentId)?.name;
                   return (
                     <button
                       key={skill._id}
@@ -293,6 +577,9 @@ export function SkillFilePage() {
                       <div className="text-xs text-ink-2 mt-0.5 flex items-center gap-2">
                         <span>v{skill.version}</span>
                         {skill.isPublished && <span className="status-online" />}
+                        <span className={skill.isActive === false ? "text-yellow-500" : "text-emerald-500"}>
+                          {skill.isActive === false ? "Disabled" : "Enabled"}
+                        </span>
                         {agentName && <span className="text-ink-1">{agentName}</span>}
                       </div>
                     </button>
@@ -322,10 +609,13 @@ export function SkillFilePage() {
                 </div>
                 <div className="flex items-center gap-3">
                   <button
-                    onClick={handleDeleteSkill}
+                    onClick={() => setShowDeleteConfirm(true)}
                     className="btn-secondary text-red-500 hover:bg-red-500/10"
                   >
                     Delete
+                  </button>
+                  <button onClick={handleToggleActive} className="btn-secondary">
+                    {currentSkill.isActive === false ? "Enable" : "Disable"}
                   </button>
                   <button
                     onClick={handlePublish}
@@ -364,6 +654,20 @@ export function SkillFilePage() {
                 </div>
               </div>
 
+              {showDeleteConfirm && (
+                <div className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 p-4">
+                  <p className="text-sm text-ink-0">Delete this skill permanently?</p>
+                  <div className="mt-3 flex gap-2">
+                    <button onClick={() => setShowDeleteConfirm(false)} className="btn-secondary">
+                      Cancel
+                    </button>
+                    <button onClick={handleDeleteSkill} className="btn-secondary text-red-500 hover:bg-red-500/10">
+                      Delete skill
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Agent assignment */}
               <div className="card mb-6">
                 <h2 className="font-semibold text-ink-0">Assigned agent</h2>
@@ -374,7 +678,7 @@ export function SkillFilePage() {
                   className="input mt-3"
                 >
                   <option value="">Unassigned</option>
-                  {agents.map((agent) => (
+                  {agents.map((agent: AgentOption) => (
                     <option key={agent._id} value={agent._id}>{agent.name}</option>
                   ))}
                 </select>
@@ -542,7 +846,18 @@ export function SkillFilePage() {
                         <option value="casual">Casual</option>
                         <option value="technical">Technical</option>
                         <option value="concise">Concise</option>
+                        <option value="custom">Custom</option>
                       </select>
+                      {/* Text input for custom tone */}
+                      {tone === "custom" && (
+                        <input
+                          type="text"
+                          value={customTone}
+                          onChange={(e) => setCustomTone(e.target.value)}
+                          placeholder="Describe your preferred tone"
+                          className="input mt-2"
+                        />
+                      )}
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-ink-0">

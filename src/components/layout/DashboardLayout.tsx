@@ -77,6 +77,24 @@ const navItems = [
     ),
   },
   {
+    label: "A2A",
+    href: "/a2a",
+    icon: (
+      <svg
+        className="h-5 w-5"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth={1.5}>
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M7.5 8.25h9m-9 3.75h5.25m7.125 6.75H4.125A2.625 2.625 0 011.5 16.125V6.375A2.625 2.625 0 014.125 3.75h15.75A2.625 2.625 0 0122.5 6.375v9.75a2.625 2.625 0 01-2.625 2.625z"
+        />
+      </svg>
+    ),
+  },
+  {
     label: "Board",
     href: "/board",
     icon: (

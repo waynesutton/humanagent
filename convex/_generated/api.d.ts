@@ -14,6 +14,8 @@ import type * as agent_security from "../agent/security.js";
 import type * as agent_securityUtils from "../agent/securityUtils.js";
 import type * as auth from "../auth.js";
 import type * as crons from "../crons.js";
+import type * as functions_a2a from "../functions/a2a.js";
+import type * as functions_agentDocs from "../functions/agentDocs.js";
 import type * as functions_agentThinking from "../functions/agentThinking.js";
 import type * as functions_agents from "../functions/agents.js";
 import type * as functions_apiKeys from "../functions/apiKeys.js";
@@ -49,6 +51,8 @@ declare const fullApi: ApiFromModules<{
   "agent/securityUtils": typeof agent_securityUtils;
   auth: typeof auth;
   crons: typeof crons;
+  "functions/a2a": typeof functions_a2a;
+  "functions/agentDocs": typeof functions_agentDocs;
   "functions/agentThinking": typeof functions_agentThinking;
   "functions/agents": typeof functions_agents;
   "functions/apiKeys": typeof functions_apiKeys;

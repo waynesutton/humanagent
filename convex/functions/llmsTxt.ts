@@ -10,6 +10,14 @@ import { internal } from "../_generated/api";
 // Get llms.txt content for a user by username
 export const getByUsername = query({
   args: { username: v.string() },
+  returns: v.union(
+    v.object({
+      txtContent: v.string(),
+      mdContent: v.string(),
+      generatedAt: v.number(),
+    }),
+    v.null()
+  ),
   handler: async (ctx, { username }) => {
     const record = await ctx.db
       .query("llmsTxt")
@@ -52,6 +60,22 @@ function generateContentHash(data: {
   return hash.toString(16);
 }
 
+// Visibility flags per agent (mirrors schema publicConnect)
+type AgentVisibility = {
+  showApi: boolean;
+  showMcp: boolean;
+  showEmail: boolean;
+  showSkillFile: boolean;
+};
+
+// Default visibility when publicConnect is unset
+const DEFAULT_VISIBILITY: AgentVisibility = {
+  showApi: true,
+  showMcp: true,
+  showEmail: true,
+  showSkillFile: true,
+};
+
 // Generate the llms.txt plain text content
 function generateTxtContent(
   username: string,
@@ -63,6 +87,7 @@ function generateTxtContent(
     description?: string;
     isPublic: boolean;
     agentEmail?: string;
+    publicConnect?: AgentVisibility;
     skills: Array<{
       name: string;
       bio: string;
@@ -70,7 +95,8 @@ function generateTxtContent(
       knowledgeDomains: string[];
     }>;
   }>,
-  baseUrl: string
+  baseUrl: string,
+  userPrivacy?: { showEmail?: boolean; showEndpoints?: boolean }
 ): string {
   const lines: Array<string> = [];
 
@@ -79,7 +105,10 @@ function generateTxtContent(
   lines.push(`> ${bio || "AI-powered personal agents"}`);
   lines.push("");
   lines.push(`Profile: ${baseUrl}/${username}`);
-  lines.push(`API: ${baseUrl}/api/v1/agents/${username}/messages`);
+  // Only show default API if endpoints are visible
+  if (userPrivacy?.showEndpoints !== false) {
+    lines.push(`API: ${baseUrl}/api/v1/agents/${username}/messages`);
+  }
   lines.push("");
 
   // List public agents
@@ -94,18 +123,25 @@ function generateTxtContent(
   lines.push("");
 
   for (const agent of publicAgents) {
+    const vis = agent.publicConnect ?? DEFAULT_VISIBILITY;
+
     lines.push(`### ${agent.name}`);
     if (agent.description) {
       lines.push(`> ${agent.description}`);
     }
     lines.push("");
 
-    // Agent endpoints
+    // Agent endpoints (respect visibility)
     lines.push(`- Slug: ${agent.slug}`);
-    if (agent.agentEmail) {
+    if (vis.showEmail && agent.agentEmail && userPrivacy?.showEmail !== false) {
       lines.push(`- Email: ${agent.agentEmail}`);
     }
-    lines.push(`- API: ${baseUrl}/api/v1/agents/${username}/${agent.slug}/messages`);
+    if (vis.showApi) {
+      lines.push(`- API: ${baseUrl}/api/v1/agents/${username}/${agent.slug}/messages`);
+    }
+    if (vis.showMcp) {
+      lines.push(`- MCP: ${baseUrl}/mcp/u/${username}/${agent.slug}`);
+    }
     lines.push("");
 
     // Skills and capabilities
@@ -147,6 +183,7 @@ function generateMdContent(
     isPublic: boolean;
     agentEmail?: string;
     agentPhone?: string;
+    publicConnect?: AgentVisibility;
     personality?: {
       tone?: string;
       speakingStyle?: string;
@@ -160,7 +197,8 @@ function generateMdContent(
       communicationPrefs: { tone: string; timezone: string; availability: string };
     }>;
   }>,
-  baseUrl: string
+  baseUrl: string,
+  userPrivacy?: { showEmail?: boolean; showEndpoints?: boolean }
 ): string {
   const lines: Array<string> = [];
 
@@ -180,12 +218,15 @@ function generateMdContent(
     lines.push("");
   }
 
-  // Quick links
+  // Quick links (respect user-level endpoint visibility)
   lines.push("## Quick Links");
   lines.push("");
   lines.push(`- **Profile**: [${baseUrl}/${username}](${baseUrl}/${username})`);
-  lines.push(`- **API Endpoint**: \`POST ${baseUrl}/api/v1/agents/${username}/messages\``);
+  if (userPrivacy?.showEndpoints !== false) {
+    lines.push(`- **API Endpoint**: \`POST ${baseUrl}/api/v1/agents/${username}/messages\``);
+  }
   lines.push(`- **llms.txt**: [${baseUrl}/${username}/llms.txt](${baseUrl}/${username}/llms.txt)`);
+  lines.push(`- **Docs**: [${baseUrl}/api/v1/agents/${username}/docs.md](${baseUrl}/api/v1/agents/${username}/docs.md)`);
   lines.push("");
 
   // List public agents with full details
@@ -200,6 +241,8 @@ function generateMdContent(
   lines.push("");
 
   for (const agent of publicAgents) {
+    const vis = agent.publicConnect ?? DEFAULT_VISIBILITY;
+
     lines.push(`### ${agent.name}`);
     lines.push("");
 
@@ -208,17 +251,22 @@ function generateMdContent(
       lines.push("");
     }
 
-    // Contact info
+    // Contact info (filtered by visibility)
     lines.push("#### Contact");
     lines.push("");
     lines.push(`| Method | Address |`);
     lines.push(`|--------|---------|`);
-    lines.push(`| API | \`POST ${baseUrl}/api/v1/agents/${username}/${agent.slug}/messages\` |`);
-    if (agent.agentEmail) {
+    if (vis.showApi) {
+      lines.push(`| API | \`POST ${baseUrl}/api/v1/agents/${username}/${agent.slug}/messages\` |`);
+    }
+    if (vis.showEmail && agent.agentEmail && userPrivacy?.showEmail !== false) {
       lines.push(`| Email | ${agent.agentEmail} |`);
     }
-    if (agent.agentPhone) {
-      lines.push(`| Phone | ${agent.agentPhone} |`);
+    if (vis.showMcp) {
+      lines.push(`| MCP | \`${baseUrl}/mcp/u/${username}/${agent.slug}\` |`);
+    }
+    if (vis.showSkillFile) {
+      lines.push(`| Skill File | [SKILL.md](${baseUrl}/u/${username}/${agent.slug}/SKILL.md) |`);
     }
     lines.push("");
 
@@ -282,6 +330,8 @@ function generateMdContent(
   lines.push(`  -d '{"content": "Hello, how can you help me?"}'`);
   lines.push("```");
   lines.push("");
+  lines.push("Content negotiation: request markdown with `Accept: text/markdown`.");
+  lines.push("");
 
   // Footer
   lines.push("---");
@@ -294,6 +344,7 @@ function generateMdContent(
 // Internal query to get data needed for generation
 export const getGenerationData = internalQuery({
   args: { userId: v.id("users") },
+  returns: v.union(v.any(), v.null()),
   handler: async (ctx, { userId }) => {
     const user = await ctx.db.get(userId);
     if (!user || !user.username) return null;
@@ -319,6 +370,7 @@ export const getGenerationData = internalQuery({
           isPublic: agent.isPublic,
           agentEmail: agent.agentEmail,
           agentPhone: agent.agentPhone,
+          publicConnect: agent.publicConnect as AgentVisibility | undefined,
           personality: agent.personality,
           skills: skills.map((s) => ({
             name: s.identity.name,
@@ -336,6 +388,7 @@ export const getGenerationData = internalQuery({
       username: user.username,
       displayName: user.name,
       bio: user.bio,
+      userPrivacy: user.privacySettings as { showEmail?: boolean; showEndpoints?: boolean } | undefined,
       agents: agentsWithSkills,
     };
   },
@@ -347,6 +400,7 @@ type LlmsGenerationData = {
   username: string;
   displayName?: string;
   bio?: string;
+  userPrivacy?: { showEmail?: boolean; showEndpoints?: boolean };
   agents: Array<{
     name: string;
     slug: string;
@@ -354,6 +408,7 @@ type LlmsGenerationData = {
     isPublic: boolean;
     agentEmail?: string;
     agentPhone?: string;
+    publicConnect?: AgentVisibility;
     personality?: {
       tone?: string;
       speakingStyle?: string;
@@ -374,7 +429,7 @@ export const regenerate = internalMutation({
   args: { userId: v.id("users") },
   returns: v.union(v.id("llmsTxt"), v.null()),
   handler: async (ctx, { userId }) => {
-    // Get user data - inline query to avoid circular reference
+    // Get user data (inline to avoid circular reference)
     const user = await ctx.db.get(userId);
     if (!user || !user.username) return null;
 
@@ -384,7 +439,7 @@ export const regenerate = internalMutation({
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .collect();
 
-    // Get skills for each agent
+    // Get skills for each agent, include publicConnect
     const agentsWithSkills = await Promise.all(
       agents.map(async (agent) => {
         const skills = await ctx.db
@@ -399,6 +454,7 @@ export const regenerate = internalMutation({
           isPublic: agent.isPublic,
           agentEmail: agent.agentEmail,
           agentPhone: agent.agentPhone,
+          publicConnect: agent.publicConnect as AgentVisibility | undefined,
           personality: agent.personality,
           skills: skills.map((s) => ({
             name: s.identity.name,
@@ -416,14 +472,13 @@ export const regenerate = internalMutation({
       username: user.username,
       displayName: user.name,
       bio: user.bio,
+      userPrivacy: user.privacySettings as { showEmail?: boolean; showEndpoints?: boolean } | undefined,
       agents: agentsWithSkills,
     };
 
-    if (!data) return null;
-
     const baseUrl = process.env.SITE_URL || "https://humanagent.dev";
 
-    // Generate content hash
+    // Generate content hash (includes publicConnect for change detection)
     const contentHash = generateContentHash({
       username: data.username,
       agents: data.agents.map((a) => ({
@@ -445,17 +500,17 @@ export const regenerate = internalMutation({
       .unique();
 
     if (existing && existing.contentHash === contentHash) {
-      // No changes, skip regeneration
       return existing._id;
     }
 
-    // Generate content
+    // Generate content with privacy-safe filtering
     const txtContent = generateTxtContent(
       data.username,
       data.displayName,
       data.bio,
       data.agents,
-      baseUrl
+      baseUrl,
+      data.userPrivacy
     );
 
     const mdContent = generateMdContent(
@@ -463,13 +518,13 @@ export const regenerate = internalMutation({
       data.displayName,
       data.bio,
       data.agents,
-      baseUrl
+      baseUrl,
+      data.userPrivacy
     );
 
     const now = Date.now();
 
     if (existing) {
-      // Update existing record
       await ctx.db.patch(existing._id, {
         txtContent,
         mdContent,
@@ -478,7 +533,6 @@ export const regenerate = internalMutation({
       });
       return existing._id;
     } else {
-      // Create new record
       return await ctx.db.insert("llmsTxt", {
         userId,
         username: data.username,

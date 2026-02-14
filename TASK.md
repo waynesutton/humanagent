@@ -8,7 +8,12 @@ Active development tasks and roadmap items.
 - [ ] Verify X/Twitter integration with xAI Grok mode
 - [ ] setup domain name https://dash.cloudflare.com/fd1c9b236bcc4249878be762a9cca473/humanai.gent
 - [ ] setup domain in convex
-- setup docs
+- [ ] setup docs
+- [ ] update box borders on profile
+- [ ] fix inbox and
+- [ ] mayke sure all in sync
+- [ ] npm run typecheck
+- [ ] feat: harden public agent API auth and ship privacy-safe discovery docs surface
 
 ## Up Next
 
@@ -56,6 +61,17 @@ Active development tasks and roadmap items.
 
 ## Completed
 
+- [x] Harden public message API auth to fail closed on invalid API keys with stable JSON error envelopes
+- [x] Add canonical discovery docs routes: `/:username/sitemap.md`, `/api/v1/agents/:username/docs.md`, `/tools.md`, `/openapi.json`
+- [x] Add shared docs contract builder in `convex/functions/agentDocs.ts` for markdown + OpenAPI outputs
+- [x] Make `llms.txt` and `llms-full.md` privacy-aware using agent `publicConnect` and user `privacySettings`
+- [x] Update public profile endpoint cards to include API Docs, Tools Docs, OpenAPI, and Sitemap links
+- [x] Validate project type safety after changes (`npm run typecheck` passes)
+- [x] Enable username edits in settings with backend validation and uniqueness checks
+- [x] Add social profile fields in settings (X/Twitter, LinkedIn, GitHub)
+- [x] Normalize social input handles/URLs to canonical links on save
+- [x] Add profile-card save button and helper text for social profile inputs
+- [x] Resolve all current TypeScript errors (`npm run typecheck` passes)
 - [x] Multi-provider BYOK LLM support (8 providers)
 - [x] Agent security module with injection detection
 - [x] MCP server endpoints with JSON-RPC 2.0

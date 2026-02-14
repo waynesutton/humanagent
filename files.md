@@ -18,6 +18,7 @@
 | `CLAUDE.md` | AI assistant rules: security constraints, Convex patterns, file conventions |
 | `files.md` | This file. Describes every file in the codebase |
 | `changelog.md` | Developer changelog tracking features and fixes |
+| `TASK.md` | Active development tasks and roadmap items |
 
 ## convex/
 
@@ -25,10 +26,10 @@ Backend functions, schema, auth, HTTP routes, and cron jobs.
 
 | File | Description |
 |---|---|
-| `schema.ts` | Database schema with 20+ tables: users, agents, skills, agentMemory, agentThoughts, conversations, tasks, feedItems, boardColumns, userCredentials, connectedApps, auditLog, permissions, apiKeys, mcpConnections, rateLimits, securityFlags, agentHealth, userSchedules, llmsTxt |
-| `auth.ts` | Auth setup with @robelest/convex-auth, GitHub and Google OAuth providers |
+| `schema.ts` | Database schema with 20+ tables. `users` includes profile visibility controls and `socialProfiles` fields (`twitter`, `linkedin`, `github`) |
+| `auth.ts` | Auth setup with @robelest/convex-auth and GitHub OAuth provider |
 | `auth.config.ts` | Auth configuration settings |
-| `http.ts` | HTTP router: auth routes, REST API, MCP server endpoints, Twilio SMS/Voice webhooks, AgentMail webhook, skill file endpoints, A2A agent card, llms.txt endpoints, CORS |
+| `http.ts` | HTTP router: auth routes, fail-closed REST API auth, stable API error envelopes, content negotiation headers, MCP endpoints, Twilio SMS/Voice webhooks, AgentMail webhook, skill endpoints, llms endpoints, and discovery docs routes (`sitemap.md`, `docs.md`, `tools.md`, `openapi.json`) |
 | `crons.ts` | Cron jobs: agent heartbeat (5min), monthly token reset, memory compression (24h), rate limit cleanup (1h), permissions cleanup (6h) |
 | `convex.config.ts` | Convex app config registering auth and crons components |
 | `tsconfig.json` | TypeScript config scoped to Convex backend |
@@ -60,7 +61,7 @@ CRUD functions and business logic for each domain.
 
 | File | Description |
 |---|---|
-| `users.ts` | User queries (viewer, getByUsername, getById), mutations (create, update, updateTokenUsage), privacy settings, token budget management |
+| `users.ts` | User queries and mutations for onboarding/settings/profile photo, username updates, privacy settings, social profile normalization, and token budget management |
 | `agents.ts` | Multi-agent management: create, update, delete, set default, get by phone, token usage tracking, scheduling, browser automation config |
 | `skills.ts` | Skill CRUD (getMySkill, getPublicSkill, getByUserId), publish/unpublish, update capabilities, tool declarations |
 | `credentials.ts` | Encrypted credential storage (BYOK): save, get, delete for LLM providers and integrations |
@@ -75,8 +76,10 @@ CRUD functions and business logic for each domain.
 | `mcpConnections.ts` | External MCP server tracking: add/update/remove connections, tool allowlists, audit status |
 | `userSchedules.ts` | Dynamic cron jobs per user: daily digest, calendar sync, custom schedules |
 | `agentThinking.ts` | Agent reasoning/thinking capabilities: observations, decisions, reflections, goal updates |
-| `llmsTxt.ts` | LLMs.txt file generation for AI discoverability following llms.txt spec |
-| `xTwitter.ts` | X/Twitter integration: xAI Grok mode and direct X API mode, posting, monitoring |
+| `a2a.ts` | Agent-to-agent messaging: inbox/outbox threads, message sending, auto-response processing, and thread summaries |
+| `llmsTxt.ts` | LLMs.txt file generation for AI discoverability following llms.txt spec, privacy-safe filtering via publicConnect/privacySettings |
+| `agentDocs.ts` | Shared contract builder for agent discovery docs: sitemap.md, docs.md, tools.md, openapi.json with privacy-aware rendering |
+| `xTwitter.ts` | X/Twitter Grok actions for trend analysis, sentiment, monitoring, account analysis, and internal Grok query helper |
 | `security.ts` | Security functions: flag creation, query by user |
 
 ### convex/_generated/
@@ -114,11 +117,12 @@ React frontend with Vite.
 | `ConversationsPage.tsx` | List and view agent conversations with message detail |
 | `BoardPage.tsx` | Kanban task board with drag and drop, task creation, agent assignment, public/private toggle, archive/restore |
 | `FeedPage.tsx` | Activity feed with public post creation |
-| `SettingsPage.tsx` | Profile, privacy settings, BYOK LLM config (8 providers), credentials management, API keys, browser automation, danger zone |
+| `SettingsPage.tsx` | Profile and privacy settings with editable username, social profile fields (X, LinkedIn, GitHub), profile save action, BYOK providers, and API key management |
 | `AgentsPage.tsx` | Multi-agent management: create, edit, delete agents with LLM config, phone settings, voice config, X/Twitter integration, scheduling |
 | `InboxPage.tsx` | Inbox for email/phone/API conversations with reply and status management |
-| `PublicUserProfilePage.tsx` | Public user profile at `/u/:username` with agent selection, WebMCP registration, privacy-aware sections |
-| `PublicAgentPage.tsx` | Public agent page (deprecated, redirects to PublicUserProfilePage) |
+| `A2AInboxPage.tsx` | Agent-to-agent inbox/outbox page for thread list, message flow, and cross-agent conversation management |
+| `PublicUserProfilePage.tsx` | Public profile at `/u/:username` with agent selection, privacy-aware sections, and social links from user settings or connected apps |
+| `PublicAgentPage.tsx` | Public agent profile page with privacy-aware endpoint cards, llms links, and discovery docs links (API Docs, Tools Docs, OpenAPI, Sitemap) |
 
 ### src/components/
 

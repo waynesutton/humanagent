@@ -14,6 +14,7 @@ import { internalMutation, internalQuery } from "../_generated/server";
 // List all conversations for the current user
 export const list = authedQuery({
   args: {},
+  returns: v.array(v.any()),
   handler: async (ctx) => {
     return await ctx.db
       .query("conversations")
@@ -26,6 +27,7 @@ export const list = authedQuery({
 // Get a specific conversation
 export const get = authedQuery({
   args: { conversationId: v.id("conversations") },
+  returns: v.union(v.any(), v.null()),
   handler: async (ctx, { conversationId }) => {
     const conv = await ctx.db.get(conversationId);
     if (!conv || conv.userId !== ctx.userId) {
@@ -45,6 +47,7 @@ export const reply = authedMutation({
     conversationId: v.id("conversations"),
     content: v.string(),
   },
+  returns: v.null(),
   handler: async (ctx, { conversationId, content }) => {
     const conv = await ctx.db.get(conversationId);
     if (!conv || conv.userId !== ctx.userId) {
@@ -65,6 +68,7 @@ export const reply = authedMutation({
 
     // TODO: Actually send the reply via the original channel
     // This would involve calling the appropriate service (email, SMS, etc.)
+    return null;
   },
 });
 
@@ -78,6 +82,7 @@ export const updateStatus = authedMutation({
       v.literal("escalated")
     ),
   },
+  returns: v.null(),
   handler: async (ctx, { conversationId, status }) => {
     const conv = await ctx.db.get(conversationId);
     if (!conv || conv.userId !== ctx.userId) {
@@ -85,6 +90,7 @@ export const updateStatus = authedMutation({
     }
 
     await ctx.db.patch(conversationId, { status });
+    return null;
   },
 });
 
@@ -94,6 +100,7 @@ export const setSummary = authedMutation({
     conversationId: v.id("conversations"),
     summary: v.string(),
   },
+  returns: v.null(),
   handler: async (ctx, { conversationId, summary }) => {
     const conv = await ctx.db.get(conversationId);
     if (!conv || conv.userId !== ctx.userId) {
@@ -101,6 +108,7 @@ export const setSummary = authedMutation({
     }
 
     await ctx.db.patch(conversationId, { summary });
+    return null;
   },
 });
 

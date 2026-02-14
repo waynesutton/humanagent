@@ -18,6 +18,7 @@ function extractStorageIdFromImage(image?: string): Id<"_storage"> | null {
 // List all agents for the current user
 export const list = authedQuery({
   args: {},
+  returns: v.array(v.any()),
   handler: async (ctx) => {
     const agents = await ctx.db
       .query("agents")
@@ -42,6 +43,7 @@ export const list = authedQuery({
 // Get a specific agent by ID
 export const get = authedQuery({
   args: { agentId: v.id("agents") },
+  returns: v.union(v.any(), v.null()),
   handler: async (ctx, { agentId }) => {
     const agent = await ctx.db.get(agentId);
     // Verify ownership
@@ -55,6 +57,7 @@ export const get = authedQuery({
 // Get user's default agent
 export const getDefault = authedQuery({
   args: {},
+  returns: v.union(v.any(), v.null()),
   handler: async (ctx) => {
     return await ctx.db
       .query("agents")
@@ -89,9 +92,12 @@ export const create = authedMutation({
       v.object({
         enabled: v.boolean(),
         allowPublicAgents: v.boolean(),
+        autoRespond: v.optional(v.boolean()),
+        maxAutoReplyHops: v.optional(v.number()),
       })
     ),
   },
+  returns: v.id("agents"),
   handler: async (ctx, args) => {
     // Validate slug format (URL-safe, lowercase)
     const slug = args.slug.toLowerCase().replace(/[^a-z0-9-]/g, "-");
@@ -129,7 +135,11 @@ export const create = authedMutation({
       a2aConfig: args.a2aConfig ?? {
         enabled: false,
         allowPublicAgents: false,
+        autoRespond: true,
+        maxAutoReplyHops: 2,
       },
+      schedulingActive: false,
+      schedulingMode: "manual",
       createdAt: now,
       updatedAt: now,
     });
@@ -283,9 +293,12 @@ export const update = authedMutation({
       v.object({
         enabled: v.boolean(),
         allowPublicAgents: v.boolean(),
+        autoRespond: v.optional(v.boolean()),
+        maxAutoReplyHops: v.optional(v.number()),
       })
     ),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const agent = await ctx.db.get(args.agentId);
     if (!agent || agent.userId !== ctx.userId) {
@@ -305,7 +318,11 @@ export const update = authedMutation({
     if (args.phoneConfig !== undefined) patch.phoneConfig = args.phoneConfig;
     if (args.voiceConfig !== undefined) patch.voiceConfig = args.voiceConfig;
     if (args.personality !== undefined) patch.personality = args.personality;
-    if (args.scheduling !== undefined) patch.scheduling = args.scheduling;
+    if (args.scheduling !== undefined) {
+      patch.scheduling = args.scheduling;
+      patch.schedulingActive = args.scheduling.isActive;
+      patch.schedulingMode = args.scheduling.mode;
+    }
     if (args.thinking !== undefined) patch.thinking = args.thinking;
     if (args.browserAutomation !== undefined) patch.browserAutomation = args.browserAutomation;
     if (args.a2aConfig !== undefined) patch.a2aConfig = args.a2aConfig;
@@ -344,12 +361,14 @@ export const update = authedMutation({
         userId: ctx.userId,
       });
     }
+    return null;
   },
 });
 
 // Public: list public agents by username (for public profile connect section)
 export const listPublicByUsername = query({
   args: { username: v.string() },
+  returns: v.array(v.any()),
   handler: async (ctx, { username }) => {
     const user = await ctx.db
       .query("users")
@@ -387,6 +406,7 @@ export const listPublicByUsername = query({
 // Public: resolve a specific public agent by username + slug
 export const getPublicByUsernameAndSlug = query({
   args: { username: v.string(), slug: v.string() },
+  returns: v.union(v.any(), v.null()),
   handler: async (ctx, { username, slug }) => {
     const user = await ctx.db
       .query("users")
@@ -407,6 +427,7 @@ export const getPublicByUsernameAndSlug = query({
 // Public: resolve the deterministic default public agent for a username
 export const getPublicDefaultByUsername = query({
   args: { username: v.string() },
+  returns: v.union(v.any(), v.null()),
   handler: async (ctx, { username }) => {
     const user = await ctx.db
       .query("users")
@@ -461,6 +482,7 @@ export const setAgentPhoto = authedMutation({
 // Set an agent as the default
 export const setDefault = authedMutation({
   args: { agentId: v.id("agents") },
+  returns: v.null(),
   handler: async (ctx, { agentId }) => {
     const agent = await ctx.db.get(agentId);
     if (!agent || agent.userId !== ctx.userId) {
@@ -480,12 +502,14 @@ export const setDefault = authedMutation({
 
     // Update user's default agent reference
     await ctx.db.patch(ctx.userId, { defaultAgentId: agentId });
+    return null;
   },
 });
 
 // Delete an agent
 export const remove = authedMutation({
   args: { agentId: v.id("agents") },
+  returns: v.null(),
   handler: async (ctx, { agentId }) => {
     const agent = await ctx.db.get(agentId);
     if (!agent || agent.userId !== ctx.userId) {
@@ -521,6 +545,7 @@ export const remove = authedMutation({
     await Promise.all(skillDeletes);
 
     await ctx.db.delete(agentId);
+    return null;
   },
 });
 
@@ -530,6 +555,7 @@ export const remove = authedMutation({
 
 export const getById = internalQuery({
   args: { agentId: v.id("agents") },
+  returns: v.union(v.any(), v.null()),
   handler: async (ctx, { agentId }) => {
     return await ctx.db.get(agentId);
   },
@@ -537,6 +563,7 @@ export const getById = internalQuery({
 
 export const getByUserIdAndSlug = internalQuery({
   args: { userId: v.id("users"), slug: v.string() },
+  returns: v.union(v.any(), v.null()),
   handler: async (ctx, { userId, slug }) => {
     return await ctx.db
       .query("agents")
@@ -569,11 +596,25 @@ export const updateTokenUsage = internalMutation({
 // Get agent by phone number (for Twilio webhooks)
 export const getByPhone = internalQuery({
   args: { phoneNumber: v.string() },
+  returns: v.union(v.any(), v.null()),
   handler: async (ctx, { phoneNumber }) => {
-    // Query all agents and find by phone
-    // In production, add an index: .index("by_agentPhone", ["agentPhone"])
-    const agents = await ctx.db.query("agents").collect();
-    return agents.find((a) => a.agentPhone === phoneNumber) ?? null;
+    return await ctx.db
+      .query("agents")
+      .withIndex("by_agentPhone", (q) => q.eq("agentPhone", phoneNumber))
+      .first();
+  },
+});
+
+// Get agent by email address (for AgentMail webhooks)
+export const getByEmail = internalQuery({
+  args: { email: v.string() },
+  returns: v.union(v.any(), v.null()),
+  handler: async (ctx, { email }) => {
+    const normalized = email.trim().toLowerCase();
+    return await ctx.db
+      .query("agents")
+      .withIndex("by_agentEmail", (q) => q.eq("agentEmail", normalized))
+      .first();
   },
 });
 
@@ -628,6 +669,8 @@ export const updateScheduling = internalMutation({
         ...(lastRun !== undefined && { lastRun }),
         ...(nextRun !== undefined && { nextRun }),
       },
+      schedulingActive: agent.scheduling.isActive,
+      schedulingMode: agent.scheduling.mode,
       updatedAt: Date.now(),
     });
     return null;
@@ -637,10 +680,32 @@ export const updateScheduling = internalMutation({
 // Get agents with active scheduling (for cron runner)
 export const getScheduledAgents = internalQuery({
   args: {},
+  returns: v.array(v.any()),
   handler: async (ctx) => {
-    const agents = await ctx.db.query("agents").collect();
-    return agents.filter(
-      (a) => a.scheduling?.isActive && (a.scheduling.mode === "auto" || a.scheduling.mode === "cron")
+    const autoAgents = await ctx.db
+      .query("agents")
+      .withIndex("by_schedulingActive_mode", (q) =>
+        q.eq("schedulingActive", true).eq("schedulingMode", "auto")
+      )
+      .collect();
+    const cronAgents = await ctx.db
+      .query("agents")
+      .withIndex("by_schedulingActive_mode", (q) =>
+        q.eq("schedulingActive", true).eq("schedulingMode", "cron")
+      )
+      .collect();
+
+    const indexedAgents = [...autoAgents, ...cronAgents];
+    if (indexedAgents.length > 0) {
+      return indexedAgents;
+    }
+
+    // Backwards-compatible fallback for older rows before denormalized fields exist.
+    const legacyAgents = await ctx.db.query("agents").collect();
+    return legacyAgents.filter(
+      (agent) =>
+        agent.scheduling?.isActive &&
+        (agent.scheduling.mode === "auto" || agent.scheduling.mode === "cron")
     );
   },
 });

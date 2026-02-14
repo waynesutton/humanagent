@@ -8,6 +8,7 @@ import { authedQuery, authedMutation } from "../lib/functions";
 
 export const list = authedQuery({
   args: {},
+  returns: v.array(v.any()),
   handler: async (ctx) => {
     const keys = await ctx.db
       .query("apiKeys")
@@ -40,6 +41,7 @@ export const create = authedMutation({
     rateLimitPerMinute: v.optional(v.number()),
     expiresInDays: v.optional(v.number()),
   },
+  returns: v.object({ key: v.string(), prefix: v.string() }),
   handler: async (ctx, args) => {
     // Generate a random API key
     const keyBytes = new Uint8Array(32);
@@ -81,11 +83,13 @@ export const create = authedMutation({
 
 export const revoke = authedMutation({
   args: { keyId: v.id("apiKeys") },
+  returns: v.null(),
   handler: async (ctx, { keyId }) => {
     const key = await ctx.db.get(keyId);
     if (!key || key.userId !== ctx.userId) throw new Error("Key not found");
 
     await ctx.db.patch(keyId, { isActive: false });
+    return null;
   },
 });
 
@@ -95,6 +99,7 @@ export const revoke = authedMutation({
 
 export const validateToken = internalQuery({
   args: { tokenHash: v.string() },
+  returns: v.union(v.any(), v.null()),
   handler: async (ctx, { tokenHash }) => {
     const key = await ctx.db
       .query("apiKeys")

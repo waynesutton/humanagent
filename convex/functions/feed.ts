@@ -9,6 +9,7 @@ import { filter } from "convex-helpers/server/filter";
 
 export const getPublicFeed = query({
   args: { username: v.string(), limit: v.optional(v.number()) },
+  returns: v.array(v.any()),
   handler: async (ctx, { username, limit }) => {
     const user = await ctx.db
       .query("users")
@@ -28,6 +29,7 @@ export const getPublicFeed = query({
 
 export const getMyFeed = authedQuery({
   args: { limit: v.optional(v.number()) },
+  returns: v.array(v.any()),
   handler: async (ctx, { limit }) => {
     return await ctx.db
       .query("feedItems")
@@ -47,6 +49,7 @@ export const createPost = authedMutation({
     content: v.optional(v.string()),
     isPublic: v.boolean(),
   },
+  returns: v.id("feedItems"),
   handler: async (ctx, args) => {
     return await ctx.db.insert("feedItems", {
       userId: ctx.userId,
@@ -78,6 +81,7 @@ export const maybeCreateItem = internalMutation({
     metadata: v.optional(v.any()),
     isPublic: v.boolean(),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     await ctx.db.insert("feedItems", {
       userId: args.userId,
@@ -88,11 +92,13 @@ export const maybeCreateItem = internalMutation({
       isPublic: args.isPublic,
       createdAt: Date.now(),
     });
+    return null;
   },
 });
 
 export const cleanExpiredItems = internalMutation({
   args: {},
+  returns: v.null(),
   handler: async (ctx) => {
     const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
 
@@ -105,5 +111,6 @@ export const cleanExpiredItems = internalMutation({
     for (const item of old) {
       await ctx.db.delete(item._id);
     }
+    return null;
   },
 });
