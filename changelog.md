@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added 1:1 agent chat page at `/chat` with per-agent conversation threads and real-time AI responses powered by existing agent runtime (`processDashboardMessage` + `processMessage`)
+- Added chat-to-board task creation flow (`createTaskFromChat`) so a message draft can become a task in the board Inbox column, assigned to the current chat agent
+- Added in-thread task conversion in agent chat so any existing message bubble can be turned into a board task with one click
+- Added conversation to agent linkage in schema (`conversations.agentId`) with `by_userId_agentId` index to support stable per-agent dashboard chat threads
 - Added app-wide Sileo toast notifications with a shared helper in `src/lib/notify.ts`
 - Added global toaster mount in `src/App.tsx` and connected mutation flows across onboarding, settings, agents, board, inbox, A2A inbox, skills, and feed pages
 - Added toast-based action confirmations for destructive UI actions that previously used browser confirms
@@ -34,6 +38,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- Updated API key model to support one universal key system with optional delegation overlay (`keyType`, `allowedAgentIds`, `allowedRouteGroups`) while preserving backwards compatibility
+- Updated HTTP gateway auth enforcement to require key ownership binding, route-group checks, and scoped access (`api:call` for REST message routes, `mcp:call` for MCP routes)
+- Updated Settings API key flow with advanced controls for key type, route groups, and optional agent-level restrictions
+- Updated generated discovery docs and OpenAPI metadata to document scope requirements and public vs authenticated route behavior
+- Updated task board defaults to include four columns: `Inbox`, `Todo`, `In Progress`, and `Done`
+- Updated board initialization/backfill so existing users missing `Todo` automatically get default columns normalized
+- Updated dashboard navigation with a dedicated `Chat` route and kept `Inbox` focused on external channels by excluding dashboard chats from Inbox view
 - Updated notification UX to use consistent success, warning, info, and error feedback across frontend actions
 - Updated `files.md` to reflect the Sileo notification layer and page-level notification behavior
 - Expanded schema and Convex provider validators to include `deepseek` across user, agent, and credential configuration
@@ -49,12 +60,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Updated header to remove the global Online chip and moved status visibility into Settings
 - Updated Admin visibility so non-admin users do not see Admin nav and cannot access `/admin`
 - Updated Settings header to show a live "You are admin" role badge for admin users
+- Updated public profile behavior so `/:username` stays stable and no longer auto-redirects to `/:username/:slug`
+- Updated SPA routing to handle discovery docs URLs (`/:username/sitemap.md`, `/:username/llms.txt`, `/:username/llms-full.md`, `/api/v1/agents/:username/docs.md`, `/tools.md`, `/openapi.json`) without being interpreted as agent slugs
 
 ### Fixed
 
+- Fixed cross-user key namespace risk by enforcing `apiKey.userId === targetUser._id` in REST and MCP gateway checks
+- Fixed public connect endpoint clarity by adding profile-level messaging that API/MCP endpoints are authenticated while docs and sitemap endpoints remain public
 - Fixed Vite package export issue by removing invalid `sileo/dist/styles.css` import path usage from `main.tsx`
 - Fixed low-contrast/blurred toast content by adding explicit Sileo data-attribute style overrides in `src/index.css`
 - Fixed noisy unauthorized errors from agent thinking queries by returning empty results for unauthenticated/unauthorized reads
+- Fixed public route collision where discovery-doc paths like `/:username/sitemap.md` were incorrectly interpreted as public agent slug routes
 
 ## [0.3.3] - 2026-02-14
 

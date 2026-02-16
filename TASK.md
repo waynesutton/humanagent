@@ -10,10 +10,10 @@ Active development tasks and roadmap items.
 - [ ] setup domain in convex
 - [ ] setup docs
 - [ ] update box borders on profile
-- [ ] fix inbox and
+- [ ] polish inbox and agent chat handoff UX
 - [ ] mayke sure all in sync
 - [ ] npm run typecheck
-- [ ] feat: harden public agent API auth and ship privacy-safe discovery docs surface
+- [ ] add API key edit flow for route-group and agent restrictions (without rotation)
 
 ## Up Next
 
@@ -65,6 +65,9 @@ Active development tasks and roadmap items.
 
 ## Completed
 
+- [x] Add 1:1 Agent Chat page (`/chat`) with per-agent conversations and chat-to-task creation flow (creates tasks directly in Board Inbox)
+- [x] Add "Create task" action on chat message bubbles so past messages can be sent to Board Inbox without copy/paste
+- [x] Add `Todo` board column to default workflow and backfill for existing users via `ensureDefaultColumns`
 - [x] Add feed item management: hide, archive, edit, delete posts from Activity Feed
 - [x] Add `isHidden`, `isArchived`, `updatedAt` fields to `feedItems` schema with `by_userId_archived` index
 - [x] Add feed mutations: `updatePost`, `hidePost`, `unhidePost`, `archivePost`, `unarchivePost`, `deletePost`
@@ -111,6 +114,12 @@ Active development tasks and roadmap items.
 - [x] Move account actions to username dropdown in dashboard header
 - [x] Move Online status indicator from header into Settings
 - [x] Add admin badge in Settings for instant role visibility
+- [x] Keep public profile base route stable (`/:username`) without forced agent slug redirect
+- [x] Fix discovery-doc route collisions so sitemap/llms/docs paths are not treated as agent slugs
+- [x] Implement API key delegation overlay in `apiKeys` (`keyType`, `allowedAgentIds`, `allowedRouteGroups`) with backwards-compatible defaults
+- [x] Enforce API key ownership binding + route-group + scoped gateway checks across REST (`api:call`) and MCP (`mcp:call`) routes
+- [x] Update Settings API key create flow with advanced restrictions for key type, route groups, and optional agent scope
+- [x] Update public profile and generated docs content to clearly separate authenticated API/MCP endpoints from public docs and sitemap routes
 
 ## Notes
 

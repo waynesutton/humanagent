@@ -1,4 +1,7 @@
 import type { ReactNode } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 
 export type FeedTimelineItemData = {
   _id: string;
@@ -47,9 +50,13 @@ export function FeedTimelineItem({
           </div>
           <p className={`mt-2 text-sm text-ink-0 ${truncate ? "truncate" : ""}`}>{item.title}</p>
           {item.content && (
-            <p className={`mt-1 whitespace-pre-wrap text-sm text-ink-1 ${truncate ? "truncate" : ""}`}>
-              {item.content}
-            </p>
+            truncate ? (
+              <p className="mt-1 truncate text-sm text-ink-1">{toPreviewText(item.content)}</p>
+            ) : (
+              <div className="mt-1 text-sm text-ink-1">
+                <SafeMarkdownContent content={item.content} />
+              </div>
+            )
           )}
         </div>
       </div>
@@ -88,4 +95,61 @@ function formatRelativeTime(timestamp: number): string {
   if (diff < hour) return `${Math.floor(diff / minute)}m`;
   if (diff < day) return `${Math.floor(diff / hour)}h`;
   return `${Math.floor(diff / day)}d`;
+}
+
+const safeMarkdownSchema = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    a: [...(defaultSchema.attributes?.a ?? []), "target", "rel"],
+  },
+};
+
+function toPreviewText(content: string): string {
+  return content
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/[*_~]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeMdxToMarkdown(content: string): string {
+  return content
+    .replace(/^\s*(import|export)\s.+$/gm, "")
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
+    .replace(/<([A-Z][A-Za-z0-9]*)\b[^>]*\/>/g, "`<$1 />`")
+    .replace(/<([A-Z][A-Za-z0-9]*)\b[^>]*>[\s\S]*?<\/\1>/g, (_match, componentName: string) => {
+      return `\n\`\`\`mdx\n<${componentName}>...</${componentName}>\n\`\`\`\n`;
+    });
+}
+
+function SafeMarkdownContent({ content }: { content: string }) {
+  return (
+    <div className="space-y-2 whitespace-pre-wrap break-words [&_a]:text-ink-0 [&_a]:underline [&_a]:underline-offset-2 [&_code]:rounded [&_code]:bg-surface-1 [&_code]:px-1 [&_code]:py-0.5 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-surface-1 [&_pre]:p-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5">
+      {/* Render markdown safely and degrade MDX JSX to inert text/code blocks. */}
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[[rehypeSanitize, safeMarkdownSchema]]}
+        skipHtml
+        components={{
+          a: ({ href, children }) => (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-ink-0 underline underline-offset-2"
+            >
+              {children}
+            </a>
+          ),
+        }}
+      >
+        {normalizeMdxToMarkdown(content)}
+      </ReactMarkdown>
+    </div>
+  );
 }

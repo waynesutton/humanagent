@@ -41,6 +41,16 @@ export default defineSchema({
     }),
     // Default agent for backwards compatibility
     defaultAgentId: v.optional(v.id("agents")),
+    // Per-channel rate limit configuration (requests per minute unless noted)
+    rateLimitConfig: v.optional(
+      v.object({
+        apiRequestsPerMinute: v.number(), // REST API calls/min
+        mcpRequestsPerMinute: v.number(), // MCP server calls/min
+        skillExecutionsPerMinute: v.number(), // Skill tool calls/min
+        emailsPerHour: v.number(), // Outbound email sends/hour
+        a2aRequestsPerMinute: v.number(), // Agent-to-agent calls/min
+      })
+    ),
     // Privacy settings: what's visible on public profile
     privacySettings: v.optional(
       v.object({
@@ -285,10 +295,10 @@ export default defineSchema({
     .index("by_userId", ["userId"])
     .index("by_userId_service", ["userId", "service"]),
 
-  // Skills: Now linked to agents (one agent can have multiple skills)
+  // Skills: Can be linked to multiple agents via skillAgents junction table
   skills: defineTable({
     userId: v.id("users"),
-    agentId: v.optional(v.id("agents")), // Optional for backwards compat
+    agentId: v.optional(v.id("agents")), // Legacy: kept for backwards compat
     version: v.number(),
     identity: v.object({
       name: v.string(),
@@ -321,11 +331,23 @@ export default defineSchema({
       })
     ),
     isPublished: v.boolean(),
-    isActive: v.optional(v.boolean()), // Can enable/disable skills per agent (optional for backwards compat)
+    isActive: v.optional(v.boolean()), // Can enable/disable skills (optional for backwards compat)
     updatedAt: v.number(),
   })
     .index("by_userId", ["userId"])
     .index("by_agentId", ["agentId"]),
+
+  // Junction table: many-to-many link between skills and agents
+  skillAgents: defineTable({
+    skillId: v.id("skills"),
+    agentId: v.id("agents"),
+    userId: v.id("users"), // Denormalized for ownership checks
+    createdAt: v.number(),
+  })
+    .index("by_skillId", ["skillId"])
+    .index("by_agentId", ["agentId"])
+    .index("by_userId", ["userId"])
+    .index("by_skillId_agentId", ["skillId", "agentId"]),
 
   // API keys (SHA-256 hashed, never stored plaintext)
   apiKeys: defineTable({
@@ -333,6 +355,20 @@ export default defineSchema({
     name: v.string(),
     keyHash: v.string(),
     keyPrefix: v.string(),
+    keyType: v.optional(
+      v.union(v.literal("user_universal"), v.literal("agent_scoped"))
+    ),
+    allowedAgentIds: v.optional(v.array(v.id("agents"))),
+    allowedRouteGroups: v.optional(
+      v.array(
+        v.union(
+          v.literal("api"),
+          v.literal("mcp"),
+          v.literal("docs"),
+          v.literal("skills")
+        )
+      )
+    ),
     scopes: v.array(v.string()),
     rateLimitPerMinute: v.number(),
     lastUsedAt: v.optional(v.number()),
@@ -368,7 +404,7 @@ export default defineSchema({
     timestamp: v.number(),
   }).index("by_userId", ["userId"]),
 
-  // Conversations with external contacts
+  // Conversations with external contacts and 1:1 agent chats
   conversations: defineTable({
     userId: v.id("users"),
     channel: v.union(
@@ -383,6 +419,8 @@ export default defineSchema({
       v.literal("dashboard")
     ),
     externalId: v.string(),
+    // Agent this conversation is with (for dashboard 1:1 chats)
+    agentId: v.optional(v.id("agents")),
     channelMetadata: v.optional(
       v.object({
         email: v.optional(
@@ -426,7 +464,8 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_userId", ["userId"])
-    .index("by_channel_externalId", ["channel", "externalId"]),
+    .index("by_channel_externalId", ["channel", "externalId"])
+    .index("by_userId_agentId", ["userId", "agentId"]),
 
   // Kanban board columns
   boardColumns: defineTable({
@@ -441,6 +480,8 @@ export default defineSchema({
   tasks: defineTable({
     userId: v.id("users"),
     agentId: v.optional(v.id("agents")), // Which agent is assigned to this task
+    requesterUserId: v.optional(v.id("users")), // Cross-user task requester
+    requesterAgentId: v.optional(v.id("agents")), // Requester's agent
     requestedBy: v.string(),
     description: v.string(),
     status: v.union(

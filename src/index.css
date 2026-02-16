@@ -4,6 +4,29 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Color tokens as CSS custom properties.
+   Tailwind references these so all utilities (including opacity
+   modifiers like bg-surface-0/80) adapt automatically. */
+:root {
+  --surface-0: 243 243 243;
+  --surface-1: 236 236 236;
+  --surface-2: 219 219 219;
+  --surface-3: 199 198 197;
+  --ink-0: 35 35 35;
+  --ink-1: 106 106 106;
+  --ink-2: 147 144 143;
+}
+
+html[data-theme="dark"] {
+  --surface-0: 18 18 18;
+  --surface-1: 26 26 26;
+  --surface-2: 38 38 38;
+  --surface-3: 58 58 58;
+  --ink-0: 243 243 243;
+  --ink-1: 201 201 201;
+  --ink-2: 168 168 168;
+}
+
 @layer base {
   html {
     font-family: "DM Sans", system-ui, -apple-system, sans-serif;
@@ -185,61 +208,70 @@
   background: #1f2937;
 }
 
-/* Dark mode overrides */
-html[data-theme="dark"] body {
-  background: #121212;
-  color: #f3f3f3;
+/* Dark mode overrides for non-token colors (Tailwind built-in palette) */
+html[data-theme="dark"] .bg-green-100 {
+  background-color: rgba(34, 197, 94, 0.15) !important;
 }
 
-html[data-theme="dark"] .bg-surface-0 {
-  background-color: #121212 !important;
+html[data-theme="dark"] .text-green-700 {
+  color: #4ade80 !important;
 }
 
-html[data-theme="dark"] .bg-surface-1 {
-  background-color: #1a1a1a !important;
+html[data-theme="dark"] .text-green-600 {
+  color: #4ade80 !important;
 }
 
-html[data-theme="dark"] .bg-surface-2 {
-  background-color: #262626 !important;
+html[data-theme="dark"] .bg-red-50 {
+  background-color: rgba(239, 68, 68, 0.1) !important;
 }
 
-html[data-theme="dark"] .bg-surface-3 {
-  background-color: #3a3a3a !important;
+html[data-theme="dark"] .bg-red-100 {
+  background-color: rgba(239, 68, 68, 0.15) !important;
 }
 
-html[data-theme="dark"] .text-ink-0 {
-  color: #f3f3f3 !important;
+html[data-theme="dark"] .text-red-600 {
+  color: #f87171 !important;
 }
 
-html[data-theme="dark"] .text-ink-1 {
-  color: #c9c9c9 !important;
+html[data-theme="dark"] .text-red-700 {
+  color: #f87171 !important;
 }
 
-html[data-theme="dark"] .text-ink-2 {
-  color: #a8a8a8 !important;
+html[data-theme="dark"] .border-red-200 {
+  border-color: rgba(239, 68, 68, 0.25) !important;
 }
 
-html[data-theme="dark"] .border-surface-3 {
-  border-color: #3a3a3a !important;
+html[data-theme="dark"] .border-red-300 {
+  border-color: rgba(239, 68, 68, 0.3) !important;
 }
 
-html[data-theme="dark"] .card {
-  background: #171717;
-  border-color: #343434;
+html[data-theme="dark"] .bg-white {
+  background-color: rgb(var(--surface-1)) !important;
 }
 
-html[data-theme="dark"] .input {
-  background: #1f1f1f;
-  border-color: #3a3a3a;
-  color: #f3f3f3;
+html[data-theme="dark"] .bg-blue-100 {
+  background-color: rgba(59, 130, 246, 0.15) !important;
 }
 
-html[data-theme="dark"] .input::placeholder {
-  color: #9a9a9a;
+html[data-theme="dark"] .text-blue-700 {
+  color: #60a5fa !important;
 }
 
-html[data-theme="dark"] .btn-secondary {
-  background: #1f1f1f;
-  border-color: #3a3a3a;
-  color: #f3f3f3;
+html[data-theme="dark"] .bg-yellow-100 {
+  background-color: rgba(234, 179, 8, 0.15) !important;
+}
+
+html[data-theme="dark"] .text-yellow-700 {
+  color: #facc15 !important;
+}
+
+/* Dark mode: select option elements need explicit bg */
+html[data-theme="dark"] select option {
+  background-color: rgb(var(--surface-1));
+  color: rgb(var(--ink-0));
+}
+
+/* Dark mode: hover states on red danger buttons */
+html[data-theme="dark"] .hover\:bg-red-50:hover {
+  background-color: rgba(239, 68, 68, 0.15) !important;
 }

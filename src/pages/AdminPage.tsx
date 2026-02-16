@@ -1,6 +1,16 @@
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
+import type { Id } from "../../convex/_generated/dataModel";
+
+type AdminUserRow = {
+  _id: Id<"users">;
+  username?: string;
+  name?: string;
+  onboardingComplete: boolean;
+  createdAt?: number;
+  agentCount: number;
+};
 
 export function AdminPage() {
   const isAdmin = useQuery(api.functions.admin.isAdmin);
@@ -11,7 +21,7 @@ export function AdminPage() {
   const users = useQuery(
     api.functions.admin.listUsers,
     isAdmin ? { limit: 200 } : "skip"
-  );
+  ) as AdminUserRow[] | undefined;
 
   return (
     <DashboardLayout>

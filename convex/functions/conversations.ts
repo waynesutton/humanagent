@@ -5,7 +5,7 @@
  */
 import { v } from "convex/values";
 import { authedMutation, authedQuery } from "../lib/functions";
-import { internalMutation, internalQuery } from "../_generated/server";
+import { internalAction, internalMutation, internalQuery } from "../_generated/server";
 import { internal } from "../_generated/api";
 
 type EmailChannelMetadata = {
@@ -60,6 +60,20 @@ export const list = authedQuery({
       .withIndex("by_userId", (q) => q.eq("userId", ctx.userId))
       .order("desc")
       .take(100);
+  },
+});
+
+// List dashboard 1:1 chats with agents.
+export const listAgentChats = authedQuery({
+  args: {},
+  returns: v.array(v.any()),
+  handler: async (ctx) => {
+    const rows = await ctx.db
+      .query("conversations")
+      .withIndex("by_userId", (q) => q.eq("userId", ctx.userId))
+      .order("desc")
+      .take(200);
+    return rows.filter((row) => row.channel === "dashboard" && !!row.agentId);
   },
 });
 
@@ -131,6 +145,87 @@ export const reply = authedMutation({
   },
 });
 
+export const startAgentChat = authedMutation({
+  args: {
+    agentId: v.id("agents"),
+  },
+  returns: v.id("conversations"),
+  handler: async (ctx, args) => {
+    const agent = await ctx.db.get(args.agentId);
+    if (!agent || agent.userId !== ctx.userId) {
+      throw new Error("Agent not found");
+    }
+
+    const existing = await ctx.db
+      .query("conversations")
+      .withIndex("by_userId_agentId", (q) =>
+        q.eq("userId", ctx.userId).eq("agentId", args.agentId)
+      )
+      .take(20);
+    const existingDashboardChat = existing.find((row) => row.channel === "dashboard");
+    if (existingDashboardChat) {
+      return existingDashboardChat._id;
+    }
+
+    return await ctx.db.insert("conversations", {
+      userId: ctx.userId,
+      channel: "dashboard",
+      externalId: `agent:${args.agentId}`,
+      agentId: args.agentId,
+      messages: [],
+      status: "active",
+      createdAt: Date.now(),
+    });
+  },
+});
+
+export const sendDashboardMessage = authedMutation({
+  args: {
+    conversationId: v.id("conversations"),
+    content: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const content = args.content.trim();
+    if (!content) {
+      throw new Error("Message is required");
+    }
+
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation || conversation.userId !== ctx.userId) {
+      throw new Error("Conversation not found");
+    }
+    if (conversation.channel !== "dashboard" || !conversation.agentId) {
+      throw new Error("Invalid dashboard chat");
+    }
+
+    await ctx.db.patch(args.conversationId, {
+      messages: [
+        ...conversation.messages,
+        {
+          role: "external",
+          content,
+          timestamp: Date.now(),
+        },
+      ],
+      status: "active",
+    });
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.conversations.processDashboardMessage,
+      {
+        conversationId: args.conversationId,
+        userId: ctx.userId,
+        agentId: conversation.agentId,
+        message: content,
+      }
+    );
+
+    return null;
+  },
+});
+
 // Update conversation status
 export const updateStatus = authedMutation({
   args: {
@@ -191,6 +286,7 @@ export const create = internalMutation({
       v.literal("dashboard")
     ),
     externalId: v.string(),
+    agentId: v.optional(v.id("agents")),
     initialMessage: v.string(),
     channelMetadata: v.optional(
       v.object({
@@ -221,7 +317,7 @@ export const create = internalMutation({
     ),
   },
   returns: v.id("conversations"),
-  handler: async (ctx, { userId, channel, externalId, initialMessage, channelMetadata }) => {
+  handler: async (ctx, { userId, channel, externalId, agentId, initialMessage, channelMetadata }) => {
     // Check if conversation already exists
     const existing = await ctx.db
       .query("conversations")
@@ -261,6 +357,7 @@ export const create = internalMutation({
       userId,
       channel,
       externalId,
+      agentId,
       channelMetadata,
       messages: [
         {
@@ -272,6 +369,31 @@ export const create = internalMutation({
       status: "active",
       createdAt: Date.now(),
     });
+  },
+});
+
+export const processDashboardMessage = internalAction({
+  args: {
+    conversationId: v.id("conversations"),
+    userId: v.id("users"),
+    agentId: v.id("agents"),
+    message: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const result = await ctx.runAction(internal.agent.runtime.processMessage, {
+      userId: args.userId,
+      agentId: args.agentId,
+      message: args.message,
+      channel: "dashboard",
+    });
+
+    await ctx.runMutation(internal.functions.conversations.addAgentResponse, {
+      conversationId: args.conversationId,
+      content: result.response,
+    });
+
+    return null;
   },
 });
 

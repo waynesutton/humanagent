@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
@@ -22,12 +22,17 @@ interface Skill {
   knowledgeDomains: string[];
   communicationPrefs: { tone: string; timezone: string; availability: string };
   isPublished: boolean;
-  isActive?: boolean; // Optional for backwards compatibility
+  isActive?: boolean;
 }
 
 interface AgentOption {
   _id: Id<"agents">;
   name: string;
+}
+
+interface SkillAgentAssignment {
+  skillId: Id<"skills">;
+  agentId: Id<"agents">;
 }
 
 type ImportMode = "url" | "text" | "file";
@@ -121,6 +126,10 @@ export function SkillFilePage() {
   // Queries
   const agents = useQuery(api.functions.agents.list) as AgentOption[] | undefined;
   const viewer = useQuery(api.functions.users.viewer);
+  // Fetch all skill-agent assignments for the current user
+  const skillAgentAssignments = useQuery(api.functions.skills.listSkillAgents) as
+    | SkillAgentAssignment[]
+    | undefined;
 
   // State for agent/skill selection
   const [selectedAgentId, setSelectedAgentId] = useState<Id<"agents"> | "all" | undefined>("all");
@@ -138,7 +147,7 @@ export function SkillFilePage() {
   const removeSkill = useMutation(api.functions.skills.remove);
   const publishSkill = useMutation(api.functions.skills.publish);
   const unpublishSkill = useMutation(api.functions.skills.unpublish);
-  const assignToAgent = useMutation(api.functions.skills.assignToAgent);
+  const setSkillAgentsMutation = useMutation(api.functions.skills.setSkillAgents);
   const importSkills = useMutation(api.functions.skills.importSkills);
 
   // Get current skill
@@ -161,7 +170,7 @@ export function SkillFilePage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [newSkillName, setNewSkillName] = useState("");
   const [newSkillBio, setNewSkillBio] = useState("");
-  const [createForAgent, setCreateForAgent] = useState<Id<"agents"> | undefined>(undefined);
+  const [createForAgents, setCreateForAgents] = useState<Id<"agents">[]>([]);
   const [importMode, setImportMode] = useState<ImportMode>("url");
   const [importUrl, setImportUrl] = useState("");
   const [importText, setImportText] = useState("");
@@ -243,14 +252,14 @@ export function SkillFilePage() {
     setSaving(true);
     try {
       const skillId = await createSkill({
-        agentId: createForAgent,
+        agentIds: createForAgents.length > 0 ? createForAgents : undefined,
         identity: { name: newSkillName, bio: newSkillBio },
       });
       setSelectedSkillId(skillId);
       setShowCreateForm(false);
       setNewSkillName("");
       setNewSkillBio("");
-      setCreateForAgent(undefined);
+      setCreateForAgents([]);
       notify.success("Skill created");
     } catch (error) {
       notify.error("Could not create skill", error);
@@ -271,14 +280,28 @@ export function SkillFilePage() {
     }
   }
 
-  async function handleAssignToAgent(agentId: Id<"agents"> | null) {
+  // Get agent IDs currently assigned to a skill (from junction table)
+  const getAssignedAgentIds = useCallback(
+    (skillId: Id<"skills">): Id<"agents">[] => {
+      if (!skillAgentAssignments) return [];
+      return skillAgentAssignments
+        .filter((a) => a.skillId === skillId)
+        .map((a) => a.agentId);
+    },
+    [skillAgentAssignments]
+  );
+
+  // Toggle an agent assignment on/off for the current skill
+  async function handleToggleAgent(agentId: Id<"agents">) {
     if (!currentSkill) return;
+    const currentIds = getAssignedAgentIds(currentSkill._id);
+    const isAssigned = currentIds.includes(agentId);
+    const nextIds = isAssigned
+      ? currentIds.filter((id) => id !== agentId)
+      : [...currentIds, agentId];
     try {
-      await assignToAgent({ skillId: currentSkill._id, agentId });
-      notify.success(
-        "Assignment updated",
-        agentId ? "Skill linked to selected agent." : "Skill is now unassigned."
-      );
+      await setSkillAgentsMutation({ skillId: currentSkill._id, agentIds: nextIds });
+      notify.success(isAssigned ? "Agent removed from skill" : "Agent added to skill");
     } catch (error) {
       notify.error("Could not update assignment", error);
     }
@@ -323,7 +346,7 @@ export function SkillFilePage() {
         const result = await importSkills({
           source: item.source,
           payload: item.payload,
-          agentId: createForAgent,
+          agentIds: createForAgents.length > 0 ? createForAgents : undefined,
           defaultIsActive: true,
         });
         totalImported += result.importedCount;
@@ -336,6 +359,7 @@ export function SkillFilePage() {
       setImportUrl("");
       setImportText("");
       setImportFiles([]);
+      setCreateForAgents([]);
       notify.success(
         "Import complete",
         `Imported ${totalImported} skill${totalImported === 1 ? "" : "s"}.`
@@ -378,7 +402,7 @@ export function SkillFilePage() {
   }
 
   // Loading state
-  if (skills === undefined || agents === undefined) {
+  if (skills === undefined || agents === undefined || skillAgentAssignments === undefined) {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center py-20">
@@ -450,17 +474,37 @@ export function SkillFilePage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-ink-0">Assign to agent (optional)</label>
-                  <select
-                    value={createForAgent ?? ""}
-                    onChange={(e) => setCreateForAgent(e.target.value ? e.target.value as Id<"agents"> : undefined)}
-                    className="input mt-1.5"
-                  >
-                    <option value="">No agent (unassigned)</option>
-                    {agents.map((agent: AgentOption) => (
-                      <option key={agent._id} value={agent._id}>{agent.name}</option>
-                    ))}
-                  </select>
+                  <label className="block text-sm font-medium text-ink-0">Assign to agents (optional)</label>
+                  <p className="mt-0.5 text-xs text-ink-2">Select one or more agents that will use this skill.</p>
+                  <div className="mt-2 space-y-1.5 max-h-40 overflow-y-auto">
+                    {agents.map((agent: AgentOption) => {
+                      const checked = createForAgents.includes(agent._id);
+                      return (
+                        <label
+                          key={agent._id}
+                          className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 cursor-pointer transition-colors ${
+                            checked
+                              ? "border-accent bg-accent/5"
+                              : "border-surface-3 bg-surface-1 hover:bg-surface-2"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() =>
+                              setCreateForAgents((prev) =>
+                                checked
+                                  ? prev.filter((id) => id !== agent._id)
+                                  : [...prev, agent._id]
+                              )
+                            }
+                            className="h-3.5 w-3.5 rounded border-surface-3 text-accent focus:ring-accent"
+                          />
+                          <span className="text-sm text-ink-0">{agent.name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
               <div className="mt-6 flex justify-end gap-3">
@@ -547,17 +591,37 @@ export function SkillFilePage() {
                 )}
 
                 <div>
-                  <label className="block text-sm font-medium text-ink-0">Assign imported skills to agent (optional)</label>
-                  <select
-                    value={createForAgent ?? ""}
-                    onChange={(e) => setCreateForAgent(e.target.value ? e.target.value as Id<"agents"> : undefined)}
-                    className="input mt-1.5"
-                  >
-                    <option value="">No agent (unassigned)</option>
-                    {agents.map((agent: AgentOption) => (
-                      <option key={agent._id} value={agent._id}>{agent.name}</option>
-                    ))}
-                  </select>
+                  <label className="block text-sm font-medium text-ink-0">Assign imported skills to agents (optional)</label>
+                  <p className="mt-0.5 text-xs text-ink-2">Select agents that will use the imported skills.</p>
+                  <div className="mt-2 space-y-1.5 max-h-40 overflow-y-auto">
+                    {agents.map((agent: AgentOption) => {
+                      const checked = createForAgents.includes(agent._id);
+                      return (
+                        <label
+                          key={agent._id}
+                          className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 cursor-pointer transition-colors ${
+                            checked
+                              ? "border-accent bg-accent/5"
+                              : "border-surface-3 bg-surface-1 hover:bg-surface-2"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() =>
+                              setCreateForAgents((prev) =>
+                                checked
+                                  ? prev.filter((id) => id !== agent._id)
+                                  : [...prev, agent._id]
+                              )
+                            }
+                            className="h-3.5 w-3.5 rounded border-surface-3 text-accent focus:ring-accent"
+                          />
+                          <span className="text-sm text-ink-0">{agent.name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
@@ -598,7 +662,10 @@ export function SkillFilePage() {
                 </div>
               ) : (
                 skills.map((skill: Skill) => {
-                  const agentName = agents.find((a: AgentOption) => a._id === skill.agentId)?.name;
+                  const assignedIds = getAssignedAgentIds(skill._id);
+                  const assignedAgentNames = assignedIds
+                    .map((id) => agents.find((a: AgentOption) => a._id === id)?.name)
+                    .filter(Boolean);
                   return (
                     <button
                       key={skill._id}
@@ -616,8 +683,19 @@ export function SkillFilePage() {
                         <span className={skill.isActive === false ? "text-yellow-500" : "text-emerald-500"}>
                           {skill.isActive === false ? "Disabled" : "Enabled"}
                         </span>
-                        {agentName && <span className="text-ink-1">{agentName}</span>}
                       </div>
+                      {assignedAgentNames.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {assignedAgentNames.map((name) => (
+                            <span
+                              key={name}
+                              className="inline-block rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-ink-1"
+                            >
+                              {name}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </button>
                   );
                 })
@@ -704,20 +782,39 @@ export function SkillFilePage() {
                 </div>
               )}
 
-              {/* Agent assignment */}
+              {/* Agent assignment (multi-select) */}
               <div className="card mb-6">
-                <h2 className="font-semibold text-ink-0">Assigned agent</h2>
-                <p className="mt-1 text-sm text-ink-1">Which agent should use this skill?</p>
-                <select
-                  value={currentSkill.agentId ?? ""}
-                  onChange={(e) => handleAssignToAgent(e.target.value ? e.target.value as Id<"agents"> : null)}
-                  className="input mt-3"
-                >
-                  <option value="">Unassigned</option>
-                  {agents.map((agent: AgentOption) => (
-                    <option key={agent._id} value={agent._id}>{agent.name}</option>
-                  ))}
-                </select>
+                <h2 className="font-semibold text-ink-0">Assigned agents</h2>
+                <p className="mt-1 text-sm text-ink-1">
+                  Select which agents can use this skill. A skill can work with any number of agents.
+                </p>
+                {agents.length === 0 ? (
+                  <p className="mt-3 text-sm text-ink-2">No agents found. Create an agent first.</p>
+                ) : (
+                  <div className="mt-3 space-y-2">
+                    {agents.map((agent: AgentOption) => {
+                      const isChecked = getAssignedAgentIds(currentSkill._id).includes(agent._id);
+                      return (
+                        <label
+                          key={agent._id}
+                          className={`flex items-center gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
+                            isChecked
+                              ? "border-accent bg-accent/5"
+                              : "border-surface-3 bg-surface-1 hover:bg-surface-2"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => handleToggleAgent(agent._id)}
+                            className="h-4 w-4 rounded border-surface-3 text-accent focus:ring-accent"
+                          />
+                          <span className="text-sm font-medium text-ink-0">{agent.name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Form sections */}

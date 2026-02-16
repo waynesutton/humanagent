@@ -176,6 +176,79 @@ export const getDashboard = authedQuery({
   },
 });
 
+// Default rate limits when user hasn't configured custom values
+const DEFAULT_RATE_LIMITS = {
+  apiRequestsPerMinute: 60,
+  mcpRequestsPerMinute: 30,
+  skillExecutionsPerMinute: 20,
+  emailsPerHour: 50,
+  a2aRequestsPerMinute: 30,
+} as const;
+
+// Get user's rate limit config (returns defaults if not set)
+export const getUserLimits = internalQuery({
+  args: { userId: v.id("users") },
+  returns: v.object({
+    apiRequestsPerMinute: v.number(),
+    mcpRequestsPerMinute: v.number(),
+    skillExecutionsPerMinute: v.number(),
+    emailsPerHour: v.number(),
+    a2aRequestsPerMinute: v.number(),
+    tokenBudget: v.number(),
+    tokensUsedThisMonth: v.number(),
+  }),
+  handler: async (ctx, { userId }) => {
+    const user = await ctx.db.get(userId);
+    if (!user) {
+      return {
+        ...DEFAULT_RATE_LIMITS,
+        tokenBudget: 100000,
+        tokensUsedThisMonth: 0,
+      };
+    }
+
+    const rlConfig = (user as Record<string, unknown>).rateLimitConfig as
+      | typeof DEFAULT_RATE_LIMITS
+      | undefined;
+
+    return {
+      apiRequestsPerMinute: rlConfig?.apiRequestsPerMinute ?? DEFAULT_RATE_LIMITS.apiRequestsPerMinute,
+      mcpRequestsPerMinute: rlConfig?.mcpRequestsPerMinute ?? DEFAULT_RATE_LIMITS.mcpRequestsPerMinute,
+      skillExecutionsPerMinute: rlConfig?.skillExecutionsPerMinute ?? DEFAULT_RATE_LIMITS.skillExecutionsPerMinute,
+      emailsPerHour: rlConfig?.emailsPerHour ?? DEFAULT_RATE_LIMITS.emailsPerHour,
+      a2aRequestsPerMinute: rlConfig?.a2aRequestsPerMinute ?? DEFAULT_RATE_LIMITS.a2aRequestsPerMinute,
+      tokenBudget: user.llmConfig?.tokenBudget ?? 100000,
+      tokensUsedThisMonth: user.llmConfig?.tokensUsedThisMonth ?? 0,
+    };
+  },
+});
+
+// Check if user has exceeded their monthly token budget
+export const checkTokenBudget = internalQuery({
+  args: { userId: v.id("users") },
+  returns: v.object({
+    allowed: v.boolean(),
+    used: v.number(),
+    budget: v.number(),
+    remaining: v.number(),
+  }),
+  handler: async (ctx, { userId }) => {
+    const user = await ctx.db.get(userId);
+    if (!user) {
+      return { allowed: false, used: 0, budget: 0, remaining: 0 };
+    }
+
+    const used = user.llmConfig?.tokensUsedThisMonth ?? 0;
+    const budget = user.llmConfig?.tokenBudget ?? 100000;
+    return {
+      allowed: used < budget,
+      used,
+      budget,
+      remaining: Math.max(0, budget - used),
+    };
+  },
+});
+
 // Build rate limit key for different contexts
 export function buildRateLimitKey(
   type: "user" | "apiKey" | "agent",

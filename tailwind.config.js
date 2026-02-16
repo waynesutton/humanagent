@@ -16,24 +16,24 @@ export default {
     },
     extend: {
       colors: {
-        // New base color scheme - flat naming to work with @apply
+        // CSS-variable based colors: adapt automatically in dark mode
         surface: {
-          0: "#f3f3f3",      // Primary background
-          1: "#ececec",      // Secondary background
-          2: "#dbdbdb",      // Hover background
-          3: "#c7c6c5",      // Border
+          0: "rgb(var(--surface-0) / <alpha-value>)",
+          1: "rgb(var(--surface-1) / <alpha-value>)",
+          2: "rgb(var(--surface-2) / <alpha-value>)",
+          3: "rgb(var(--surface-3) / <alpha-value>)",
         },
         ink: {
-          0: "#232323",      // Primary text
-          1: "#6a6a6a",      // Secondary text
-          2: "#93908f",      // Muted/accent text
+          0: "rgb(var(--ink-0) / <alpha-value>)",
+          1: "rgb(var(--ink-1) / <alpha-value>)",
+          2: "rgb(var(--ink-2) / <alpha-value>)",
         },
         accent: {
-          DEFAULT: "#ea5b26", // Interactive accent
-          hover: "#d24714",   // Hover state
-          muted: "#93908f",   // General accent
+          DEFAULT: "#ea5b26",
+          hover: "#d24714",
+          muted: "#93908f",
         },
-        border: "#c7c6c5",
+        border: "rgb(var(--surface-3) / <alpha-value>)",
       },
       fontFamily: {
         sans: [

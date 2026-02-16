@@ -20,8 +20,21 @@ const THOUGHT_TYPES: Array<{ id: "all" | ThoughtType; label: string }> = [
   { id: "goal_update", label: "Goal updates" },
 ];
 
+type AgentRow = {
+  _id: Id<"agents">;
+  name: string;
+};
+
+type ThoughtRow = {
+  _id: Id<"agentThoughts">;
+  type: ThoughtType;
+  createdAt: number;
+  content: string;
+  context?: string;
+};
+
 export function AgentThinkingPage() {
-  const agents = useQuery(api.functions.agents.list);
+  const agents = useQuery(api.functions.agents.list) as AgentRow[] | undefined;
   const [selectedAgentId, setSelectedAgentId] = useState<Id<"agents"> | null>(null);
   const [selectedType, setSelectedType] = useState<"all" | ThoughtType>("all");
 
@@ -41,7 +54,7 @@ export function AgentThinkingPage() {
           type: selectedType === "all" ? undefined : selectedType,
         }
       : "skip"
-  );
+  ) as ThoughtRow[] | undefined;
 
   return (
     <DashboardLayout>

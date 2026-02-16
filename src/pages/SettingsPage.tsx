@@ -1,47 +1,19 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
 import { getAuth } from "../lib/auth";
 import { notify } from "../lib/notify";
 import { applyTheme, type ThemeMode } from "../lib/theme";
-
-// LLM provider configuration
-const LLM_PROVIDERS = [
-  { id: "openrouter", name: "OpenRouter", description: "Access 400+ models with one API key" },
-  { id: "anthropic", name: "Anthropic", description: "Claude models directly" },
-  { id: "openai", name: "OpenAI", description: "GPT-4o, GPT-4 Turbo, etc." },
-  { id: "deepseek", name: "DeepSeek", description: "DeepSeek chat and reasoning models via BYOK" },
-  { id: "google", name: "Google AI", description: "Gemini models" },
-  { id: "mistral", name: "Mistral", description: "Mistral models" },
-  { id: "minimax", name: "MiniMax", description: "MiniMax open-source and reasoning models" },
-  { id: "kimi", name: "Kimi (Moonshot)", description: "Kimi K2 and other Moonshot models" },
-  { id: "xai", name: "xAI (Grok)", description: "Grok models for real-time X/Twitter research only" },
-] as const;
-
-// Integration services
-const INTEGRATION_SERVICES = [
-  { id: "agentmail", name: "AgentMail", description: "Agent inbox for email communication" },
-  { id: "twilio", name: "Twilio", description: "Phone number and SMS for your agent" },
-  { id: "elevenlabs", name: "ElevenLabs", description: "AI voice for phone calls and TTS" },
-  { id: "resend", name: "Resend", description: "Transactional email notifications" },
-] as const;
-
-// Browser automation services (optional BYOK)
-const BROWSER_AUTOMATION_SERVICES = [
-  { id: "firecrawl", name: "Firecrawl", description: "Web scraping and crawling for agents" },
-  { id: "browserbase", name: "Browserbase", description: "Browser automation via Stagehand and Browser Use" },
-] as const;
-
-// X/Twitter integration services
-const X_TWITTER_SERVICES = [
-  { id: "xai", name: "xAI API", description: "Grok models with real-time X/Twitter data for analysis, research, and agent workflows" },
-  { id: "twitter", name: "X API", description: "Direct X/Twitter API for posting, replying, and account management" },
-] as const;
-
-type ProviderType = (typeof LLM_PROVIDERS)[number]["id"] | "custom";
-type IntegrationService = (typeof INTEGRATION_SERVICES)[number]["id"];
+import {
+  BROWSER_AUTOMATION_SERVICES,
+  type CredentialService,
+  INTEGRATION_SERVICES,
+  LLM_PROVIDERS,
+  platformApi,
+  type ProviderType,
+  X_TWITTER_SERVICES,
+} from "../lib/platformApi";
 type CredentialRow = {
   service: string;
   hasApiKey?: boolean;
@@ -51,30 +23,78 @@ type ApiKeyRow = {
   name: string;
   keyPrefix: string;
   scopes: Array<string>;
+  keyType?: "user_universal" | "agent_scoped";
+  allowedAgentIds?: Array<Id<"agents">>;
+  allowedRouteGroups?: Array<"api" | "mcp" | "docs" | "skills">;
   isActive: boolean;
   lastUsedAt?: number;
 };
 
+type AgentOption = {
+  _id: Id<"agents">;
+  name: string;
+  slug: string;
+};
+
+const KEY_SCOPE_OPTIONS = [
+  { id: "api:call", label: "api:call" },
+  { id: "mcp:call", label: "mcp:call" },
+  { id: "docs:read", label: "docs:read" },
+  { id: "skills:read", label: "skills:read" },
+] as const;
+
+const KEY_ROUTE_GROUP_OPTIONS = [
+  { id: "api", label: "API routes" },
+  { id: "mcp", label: "MCP routes" },
+  { id: "docs", label: "Docs routes" },
+  { id: "skills", label: "Skills routes" },
+] as const;
+
+type SecurityEventRow = {
+  _id: Id<"auditLog">;
+  timestamp: number;
+  action: string;
+  resource: string;
+  status: string;
+};
+
+type RateLimitDashboard = {
+  activeWindows: number;
+  totalRequestsInWindow: number;
+  topKeys: Array<{
+    key: string;
+    count: number;
+    resetAt: number;
+  }>;
+};
+
 export function SettingsPage() {
-  const viewer = useQuery(api.functions.users.viewer);
-  const apiKeys = useQuery(api.functions.apiKeys.list) as ApiKeyRow[] | undefined;
-  const credentials = useQuery(api.functions.credentials.list) as
+  const viewer = useQuery(platformApi.convex.auth.viewer);
+  const apiKeys = useQuery(platformApi.convex.settings.listApiKeys) as ApiKeyRow[] | undefined;
+  const myAgents = useQuery(platformApi.convex.agents.list) as AgentOption[] | undefined;
+  const credentials = useQuery(platformApi.convex.settings.listCredentials) as
     | CredentialRow[]
     | undefined;
-  const llmProviderStatus = useQuery(api.functions.credentials.getLLMProviderStatus);
-  const isAdmin = useQuery(api.functions.admin.isAdmin);
-  const securityEvents = useQuery(api.functions.auditLog.getSecurityEvents);
-  const securityCsv = useQuery(api.functions.auditLog.exportCsv, { limit: 1000 });
-  const rateLimitDashboard = useQuery(api.functions.rateLimits.getDashboard);
-  const updateSettings = useMutation(api.functions.users.updateSettings);
-  const deleteAccount = useMutation(api.functions.users.deleteAccount);
-  const generateProfilePhotoUploadUrl = useMutation(api.functions.users.generateProfilePhotoUploadUrl);
-  const setProfilePhoto = useMutation(api.functions.users.setProfilePhoto);
-  const createApiKey = useMutation(api.functions.apiKeys.create);
-  const revokeApiKey = useMutation(api.functions.apiKeys.revoke);
-  const rotateApiKey = useMutation(api.functions.apiKeys.rotate);
-  const saveCredential = useMutation(api.functions.credentials.saveApiKey);
-  const removeCredential = useMutation(api.functions.credentials.remove);
+  const llmProviderStatus = useQuery(platformApi.convex.settings.getCredentialStatus);
+  const isAdmin = useQuery(platformApi.convex.admin.isAdmin);
+  const securityEvents = useQuery(
+    platformApi.convex.security.getSecurityEvents
+  ) as SecurityEventRow[] | undefined;
+  const securityCsv = useQuery(platformApi.convex.security.exportSecurityCsv, { limit: 1000 });
+  const rateLimitDashboard = useQuery(
+    platformApi.convex.security.getRateLimitDashboard
+  ) as RateLimitDashboard | undefined;
+  const updateSettings = useMutation(platformApi.convex.settings.updateSettings);
+  const deleteAccount = useMutation(platformApi.convex.settings.deleteAccount);
+  const generateProfilePhotoUploadUrl = useMutation(
+    platformApi.convex.settings.generateProfilePhotoUploadUrl
+  );
+  const setProfilePhoto = useMutation(platformApi.convex.settings.setProfilePhoto);
+  const createApiKey = useMutation(platformApi.convex.settings.createApiKey);
+  const revokeApiKey = useMutation(platformApi.convex.settings.revokeApiKey);
+  const rotateApiKey = useMutation(platformApi.convex.settings.rotateApiKey);
+  const saveCredential = useMutation(platformApi.convex.settings.saveCredential);
+  const removeCredential = useMutation(platformApi.convex.settings.removeCredential);
   const auth = getAuth();
 
   const [username, setUsername] = useState("");
@@ -104,6 +124,14 @@ export function SettingsPage() {
   const [privacyShowEndpoints, setPrivacyShowEndpoints] = useState(true);
   const [privacyAllowAgentToAgent, setPrivacyAllowAgentToAgent] = useState(false);
 
+  // Token budget + rate limit config
+  const [tokenBudget, setTokenBudget] = useState(100000);
+  const [rlApiPerMin, setRlApiPerMin] = useState(60);
+  const [rlMcpPerMin, setRlMcpPerMin] = useState(30);
+  const [rlSkillPerMin, setRlSkillPerMin] = useState(20);
+  const [rlEmailPerHour, setRlEmailPerHour] = useState(50);
+  const [rlA2aPerMin, setRlA2aPerMin] = useState(30);
+
   // BYOK form state
   const [showByokForm, setShowByokForm] = useState<string | null>(null);
   const [byokApiKey, setByokApiKey] = useState("");
@@ -115,7 +143,19 @@ export function SettingsPage() {
   // New API key form
   const [showNewKey, setShowNewKey] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
-  const [newKeyScopes, setNewKeyScopes] = useState<string[]>(["read"]);
+  const [newKeyScopes, setNewKeyScopes] = useState<string[]>([
+    "api:call",
+    "mcp:call",
+  ]);
+  const [newKeyType, setNewKeyType] = useState<"user_universal" | "agent_scoped">(
+    "user_universal"
+  );
+  const [newKeyRouteGroups, setNewKeyRouteGroups] = useState<
+    Array<"api" | "mcp" | "docs" | "skills">
+  >(["api", "mcp", "docs", "skills"]);
+  const [newKeyAllowedAgentIds, setNewKeyAllowedAgentIds] = useState<
+    Array<Id<"agents">>
+  >([]);
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [creatingKey, setCreatingKey] = useState(false);
 
@@ -129,6 +169,23 @@ export function SettingsPage() {
       setGithubProfile(viewer.socialProfiles?.github || "");
       setLlmProvider((viewer.llmConfig?.provider as ProviderType) || "openrouter");
       setLlmModel(viewer.llmConfig?.model || "anthropic/claude-sonnet-4");
+
+      // Load token budget
+      setTokenBudget(viewer.llmConfig?.tokenBudget ?? 100000);
+
+      // Load rate limit config with defaults
+      const rlConfig = (viewer as { rateLimitConfig?: {
+        apiRequestsPerMinute?: number;
+        mcpRequestsPerMinute?: number;
+        skillExecutionsPerMinute?: number;
+        emailsPerHour?: number;
+        a2aRequestsPerMinute?: number;
+      }}).rateLimitConfig;
+      setRlApiPerMin(rlConfig?.apiRequestsPerMinute ?? 60);
+      setRlMcpPerMin(rlConfig?.mcpRequestsPerMinute ?? 30);
+      setRlSkillPerMin(rlConfig?.skillExecutionsPerMinute ?? 20);
+      setRlEmailPerHour(rlConfig?.emailsPerHour ?? 50);
+      setRlA2aPerMin(rlConfig?.a2aRequestsPerMinute ?? 30);
 
       // Load privacy settings with defaults
       const privacy = (viewer as { privacySettings?: {
@@ -174,6 +231,14 @@ export function SettingsPage() {
         },
         llmProvider: llmProvider as "openrouter" | "anthropic" | "openai" | "deepseek" | "google" | "mistral" | "minimax" | "kimi" | "xai" | "custom",
         llmModel,
+        tokenBudget,
+        rateLimitConfig: {
+          apiRequestsPerMinute: rlApiPerMin,
+          mcpRequestsPerMinute: rlMcpPerMin,
+          skillExecutionsPerMinute: rlSkillPerMin,
+          emailsPerHour: rlEmailPerHour,
+          a2aRequestsPerMinute: rlA2aPerMin,
+        },
         privacySettings: {
           profileVisible: privacyProfileVisible,
           showEmail: privacyShowEmail,
@@ -287,7 +352,7 @@ export function SettingsPage() {
     setSavingByok(true);
     try {
       await saveCredential({
-        service: service as ProviderType | IntegrationService,
+        service: service as CredentialService,
         apiKey: byokApiKey.trim(),
         config: byokBaseUrl.trim() ? { baseUrl: byokBaseUrl.trim() } : undefined,
       });
@@ -305,7 +370,7 @@ export function SettingsPage() {
   // Remove BYOK credential
   async function handleRemoveCredential(service: string) {
     try {
-      await removeCredential({ service: service as ProviderType | IntegrationService });
+      await removeCredential({ service: service as CredentialService });
       notify.success("Credential removed");
     } catch (error) {
       notify.error("Could not remove credential", error);
@@ -315,16 +380,31 @@ export function SettingsPage() {
   async function handleCreateKey(e: React.FormEvent) {
     e.preventDefault();
     if (!newKeyName.trim()) return;
+    if (newKeyRouteGroups.length === 0) {
+      notify.warning("Select at least one route group");
+      return;
+    }
+    if (newKeyType === "agent_scoped" && newKeyAllowedAgentIds.length === 0) {
+      notify.warning("Agent-scoped key requires at least one agent");
+      return;
+    }
 
     setCreatingKey(true);
     try {
       const result = await createApiKey({
         name: newKeyName.trim(),
         scopes: newKeyScopes,
+        keyType: newKeyType,
+        allowedRouteGroups: newKeyRouteGroups,
+        allowedAgentIds:
+          newKeyType === "agent_scoped" ? newKeyAllowedAgentIds : undefined,
       });
       setCreatedKey(result.key);
       setNewKeyName("");
-      setNewKeyScopes(["read"]);
+      setNewKeyScopes(["api:call", "mcp:call"]);
+      setNewKeyType("user_universal");
+      setNewKeyRouteGroups(["api", "mcp", "docs", "skills"]);
+      setNewKeyAllowedAgentIds([]);
       notify.success("API key created", "Copy your new key now.");
     } catch (error) {
       notify.error("Could not create API key", error);
@@ -372,6 +452,29 @@ export function SettingsPage() {
       .writeText(text)
       .then(() => notify.success("Copied to clipboard"))
       .catch((error: unknown) => notify.error("Could not copy", error));
+  }
+
+  function toggleNewKeyScope(scope: string, checked: boolean) {
+    setNewKeyScopes((current) =>
+      checked ? Array.from(new Set([...current, scope])) : current.filter((s) => s !== scope)
+    );
+  }
+
+  function toggleNewKeyRouteGroup(
+    group: "api" | "mcp" | "docs" | "skills",
+    checked: boolean
+  ) {
+    setNewKeyRouteGroups((current) =>
+      checked ? Array.from(new Set([...current, group])) : current.filter((g) => g !== group)
+    );
+  }
+
+  function toggleNewKeyAgent(agentId: Id<"agents">, checked: boolean) {
+    setNewKeyAllowedAgentIds((current) =>
+      checked
+        ? Array.from(new Set([...current, agentId]))
+        : current.filter((id) => id !== agentId)
+    );
   }
 
   async function handleDeleteAccount() {
@@ -829,26 +932,197 @@ export function SettingsPage() {
                 )}
               </div>
 
-              {/* Token usage */}
-              <div className="rounded-lg bg-surface-1 p-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-ink-1">Token usage this month</span>
-                  <span className="font-mono text-sm text-ink-0">
-                    {viewer.llmConfig?.tokensUsedThisMonth?.toLocaleString() || 0} / {viewer.llmConfig?.tokenBudget?.toLocaleString() || 100000}
-                  </span>
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={handleSaveProfile}
+                disabled={saving}
+                className="btn-accent"
+              >
+                {saving ? (
+                  <>
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                    Saving
+                  </>
+                ) : saved ? (
+                  <>
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                    Saved
+                  </>
+                ) : (
+                  "Save changes"
+                )}
+              </button>
+            </div>
+          </section>
+
+          {/* Usage & Rate Limits */}
+          <section className="card">
+            <h2 className="font-semibold text-ink-0">Usage & Rate Limits</h2>
+            <p className="mt-1 text-sm text-ink-1">
+              Set a universal monthly token budget and per-channel rate limits to prevent spam and control costs across all models.
+            </p>
+
+            {/* Universal token budget */}
+            <div className="mt-5">
+              <h3 className="text-sm font-medium text-ink-0">Monthly token budget</h3>
+              <p className="mt-1 text-xs text-ink-2">
+                Applies across all LLM providers and models. Your agent will stop making LLM calls once this limit is reached each month.
+              </p>
+              <div className="mt-3 space-y-3">
+                <div className="rounded-lg bg-surface-1 p-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-ink-1">Current usage</span>
+                    <span className="font-mono text-sm text-ink-0">
+                      {(viewer.llmConfig?.tokensUsedThisMonth ?? 0).toLocaleString()} / {tokenBudget.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="mt-2 h-2 rounded-full bg-surface-2">
+                    <div
+                      className="h-full rounded-full bg-accent transition-all"
+                      style={{
+                        width: `${Math.min(100, ((viewer.llmConfig?.tokensUsedThisMonth || 0) / (tokenBudget || 1)) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                  {((viewer.llmConfig?.tokensUsedThisMonth || 0) / (tokenBudget || 1)) >= 0.9 && (
+                    <p className="mt-2 text-xs text-red-500">
+                      You are approaching your monthly limit. Consider increasing your budget.
+                    </p>
+                  )}
                 </div>
-                <div className="mt-2 h-2 rounded-full bg-surface-2">
-                  <div
-                    className="h-full rounded-full bg-accent transition-all"
-                    style={{
-                      width: `${Math.min(
-                        100,
-                        ((viewer.llmConfig?.tokensUsedThisMonth || 0) /
-                          (viewer.llmConfig?.tokenBudget || 100000)) *
-                          100
-                      )}%`,
-                    }}
-                  />
+                <div>
+                  <label className="block text-xs font-medium text-ink-1">Token limit per month</label>
+                  <div className="mt-1 flex items-center gap-3">
+                    <input
+                      type="range"
+                      min={10000}
+                      max={10000000}
+                      step={10000}
+                      value={tokenBudget}
+                      onChange={(e) => setTokenBudget(Number(e.target.value))}
+                      className="h-2 flex-1 cursor-pointer appearance-none rounded-lg bg-surface-2 accent-accent"
+                    />
+                    <input
+                      type="number"
+                      min={1000}
+                      max={100000000}
+                      value={tokenBudget}
+                      onChange={(e) => setTokenBudget(Math.max(1000, Number(e.target.value)))}
+                      className="input w-32 text-right font-mono text-sm"
+                    />
+                  </div>
+                  <div className="mt-1 flex justify-between text-xs text-ink-2">
+                    <span>10K</span>
+                    <span>10M</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Per-channel rate limits */}
+            <div className="mt-6">
+              <h3 className="text-sm font-medium text-ink-0">Per-channel rate limits</h3>
+              <p className="mt-1 text-xs text-ink-2">
+                Set the maximum number of requests allowed per window for each channel. Requests exceeding the limit receive a 429 response.
+              </p>
+              <div className="mt-3 space-y-3">
+                {/* API */}
+                <div className="flex items-center justify-between rounded-lg border border-surface-3 bg-surface-1 p-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-ink-0">REST API</p>
+                    <p className="text-xs text-ink-2">Public API endpoint calls</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={10000}
+                      value={rlApiPerMin}
+                      onChange={(e) => setRlApiPerMin(Math.max(1, Number(e.target.value)))}
+                      className="input w-20 text-right font-mono text-sm"
+                    />
+                    <span className="text-xs text-ink-2 whitespace-nowrap">/min</span>
+                  </div>
+                </div>
+
+                {/* MCP */}
+                <div className="flex items-center justify-between rounded-lg border border-surface-3 bg-surface-1 p-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-ink-0">MCP Server</p>
+                    <p className="text-xs text-ink-2">MCP tool calls and prompts</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={10000}
+                      value={rlMcpPerMin}
+                      onChange={(e) => setRlMcpPerMin(Math.max(1, Number(e.target.value)))}
+                      className="input w-20 text-right font-mono text-sm"
+                    />
+                    <span className="text-xs text-ink-2 whitespace-nowrap">/min</span>
+                  </div>
+                </div>
+
+                {/* Skill executions */}
+                <div className="flex items-center justify-between rounded-lg border border-surface-3 bg-surface-1 p-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-ink-0">Skill executions</p>
+                    <p className="text-xs text-ink-2">Agent skill and tool invocations</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={10000}
+                      value={rlSkillPerMin}
+                      onChange={(e) => setRlSkillPerMin(Math.max(1, Number(e.target.value)))}
+                      className="input w-20 text-right font-mono text-sm"
+                    />
+                    <span className="text-xs text-ink-2 whitespace-nowrap">/min</span>
+                  </div>
+                </div>
+
+                {/* Email */}
+                <div className="flex items-center justify-between rounded-lg border border-surface-3 bg-surface-1 p-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-ink-0">Email</p>
+                    <p className="text-xs text-ink-2">Outbound emails from AgentMail</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={10000}
+                      value={rlEmailPerHour}
+                      onChange={(e) => setRlEmailPerHour(Math.max(1, Number(e.target.value)))}
+                      className="input w-20 text-right font-mono text-sm"
+                    />
+                    <span className="text-xs text-ink-2 whitespace-nowrap">/hour</span>
+                  </div>
+                </div>
+
+                {/* A2A */}
+                <div className="flex items-center justify-between rounded-lg border border-surface-3 bg-surface-1 p-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-ink-0">Agent to Agent</p>
+                    <p className="text-xs text-ink-2">Inbound A2A protocol messages</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={10000}
+                      value={rlA2aPerMin}
+                      onChange={(e) => setRlA2aPerMin(Math.max(1, Number(e.target.value)))}
+                      className="input w-20 text-right font-mono text-sm"
+                    />
+                    <span className="text-xs text-ink-2 whitespace-nowrap">/min</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -872,7 +1146,7 @@ export function SettingsPage() {
                     Saved
                   </>
                 ) : (
-                  "Save changes"
+                  "Save limits"
                 )}
               </button>
             </div>
@@ -1410,39 +1684,121 @@ export function SettingsPage() {
                     className="input"
                   />
                   <div>
+                    <label className="block text-sm text-ink-1">Key type</label>
+                    <select
+                      value={newKeyType}
+                      onChange={(e) =>
+                        setNewKeyType(
+                          e.target.value as "user_universal" | "agent_scoped"
+                        )
+                      }
+                      className="input mt-1"
+                    >
+                      <option value="user_universal">User universal key</option>
+                      <option value="agent_scoped">Agent scoped key</option>
+                    </select>
+                    <p className="mt-1 text-xs text-ink-2">
+                      Universal keys access your full namespace. Agent scoped keys can
+                      be limited to selected agents.
+                    </p>
+                  </div>
+                  <div>
                     <label className="block text-sm text-ink-1">Scopes</label>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      {["read", "write", "admin"].map((scope) => (
-                        <label key={scope} className="flex items-center gap-2">
+                      {KEY_SCOPE_OPTIONS.map((scope) => (
+                        <label key={scope.id} className="flex items-center gap-2">
                           <input
                             type="checkbox"
-                            checked={newKeyScopes.includes(scope)}
+                            checked={newKeyScopes.includes(scope.id)}
                             onChange={(e) =>
-                              setNewKeyScopes(
-                                e.target.checked
-                                  ? [...newKeyScopes, scope]
-                                  : newKeyScopes.filter((s) => s !== scope)
-                              )
+                              toggleNewKeyScope(scope.id, e.target.checked)
                             }
                             className="h-4 w-4 rounded border-surface-3 accent-accent"
                           />
-                          <span className="text-sm text-ink-0">{scope}</span>
+                          <span className="text-sm text-ink-0">{scope.label}</span>
                         </label>
                       ))}
                     </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-ink-1">Route groups</label>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {KEY_ROUTE_GROUP_OPTIONS.map((group) => (
+                        <label key={group.id} className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={newKeyRouteGroups.includes(group.id)}
+                            onChange={(e) =>
+                              toggleNewKeyRouteGroup(group.id, e.target.checked)
+                            }
+                            className="h-4 w-4 rounded border-surface-3 accent-accent"
+                          />
+                          <span className="text-sm text-ink-0">{group.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-ink-1">
+                      Restrict this key to agents (optional)
+                    </label>
+                    <p className="mt-1 text-xs text-ink-2">
+                      Keep empty for universal agent access. Select agents to limit
+                      this key to specific personas.
+                    </p>
+                    <div className="mt-2 max-h-40 space-y-2 overflow-y-auto rounded-lg border border-surface-3 p-2">
+                      {myAgents === undefined ? (
+                        <p className="text-xs text-ink-2">Loading agents...</p>
+                      ) : myAgents.length === 0 ? (
+                        <p className="text-xs text-ink-2">No agents found.</p>
+                      ) : (
+                        myAgents.map((agent) => (
+                          <label key={agent._id} className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={newKeyAllowedAgentIds.includes(agent._id)}
+                              onChange={(e) =>
+                                toggleNewKeyAgent(agent._id, e.target.checked)
+                              }
+                              className="h-4 w-4 rounded border-surface-3 accent-accent"
+                            />
+                            <span className="text-sm text-ink-0">
+                              {agent.name} ({agent.slug})
+                            </span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                    {newKeyType === "agent_scoped" && (
+                      <p className="mt-1 text-xs text-ink-2">
+                        Agent scoped keys require at least one selected agent.
+                      </p>
+                    )}
                   </div>
                 </div>
                 <div className="mt-4 flex gap-2">
                   <button
                     type="submit"
-                    disabled={creatingKey || !newKeyName.trim()}
+                    disabled={
+                      creatingKey ||
+                      !newKeyName.trim() ||
+                      newKeyScopes.length === 0 ||
+                      newKeyRouteGroups.length === 0 ||
+                      (newKeyType === "agent_scoped" &&
+                        newKeyAllowedAgentIds.length === 0)
+                    }
                     className="btn-accent text-sm"
                   >
                     {creatingKey ? "Creating..." : "Create key"}
                   </button>
                   <button
                     type="button"
-                    onClick={() => setShowNewKey(false)}
+                    onClick={() => {
+                      setShowNewKey(false);
+                      setNewKeyType("user_universal");
+                      setNewKeyAllowedAgentIds([]);
+                      setNewKeyRouteGroups(["api", "mcp", "docs", "skills"]);
+                    }}
                     className="btn-secondary text-sm"
                   >
                     Cancel
@@ -1519,6 +1875,15 @@ export function SettingsPage() {
                         </div>
                         <div className="mt-1 flex items-center gap-3 text-xs text-ink-2">
                           <code>{key.keyPrefix}...</code>
+                          <span>
+                            Type: {key.keyType === "agent_scoped" ? "agent scoped" : "user universal"}
+                          </span>
+                          <span>
+                            Routes: {(key.allowedRouteGroups ?? ["api", "mcp", "docs", "skills"]).join(", ")}
+                          </span>
+                          {key.allowedAgentIds && key.allowedAgentIds.length > 0 && (
+                            <span>Agents: {key.allowedAgentIds.length}</span>
+                          )}
                           <span>Scopes: {key.scopes.join(", ")}</span>
                           {key.lastUsedAt && (
                             <span>

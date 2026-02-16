@@ -1,6 +1,21 @@
 import { internalQuery } from "../_generated/server";
 import { v } from "convex/values";
 import { authedQuery, authedMutation } from "../lib/functions";
+import type { Id } from "../_generated/dataModel";
+
+const keyTypeValidator = v.union(
+  v.literal("user_universal"),
+  v.literal("agent_scoped")
+);
+
+const routeGroupValidator = v.union(
+  v.literal("api"),
+  v.literal("mcp"),
+  v.literal("docs"),
+  v.literal("skills")
+);
+
+const DEFAULT_ROUTE_GROUPS = ["api", "mcp", "docs", "skills"] as const;
 
 // ============================================================
 // Public queries
@@ -20,6 +35,9 @@ export const list = authedQuery({
       _id: k._id,
       name: k.name,
       keyPrefix: k.keyPrefix,
+      keyType: k.keyType ?? "user_universal",
+      allowedAgentIds: k.allowedAgentIds ?? [],
+      allowedRouteGroups: k.allowedRouteGroups ?? [...DEFAULT_ROUTE_GROUPS],
       scopes: k.scopes,
       rateLimitPerMinute: k.rateLimitPerMinute,
       lastUsedAt: k.lastUsedAt,
@@ -38,18 +56,35 @@ export const create = authedMutation({
   args: {
     name: v.string(),
     scopes: v.array(v.string()),
+    keyType: v.optional(keyTypeValidator),
+    allowedAgentIds: v.optional(v.array(v.id("agents"))),
+    allowedRouteGroups: v.optional(v.array(routeGroupValidator)),
     rateLimitPerMinute: v.optional(v.number()),
     expiresInDays: v.optional(v.number()),
   },
   returns: v.object({ key: v.string(), prefix: v.string() }),
   handler: async (ctx, args) => {
     const { rawKey, keyHash, keyPrefix } = await generateHashedKey();
+    const keyType = args.keyType ?? "user_universal";
+    const allowedRouteGroups = args.allowedRouteGroups ?? [...DEFAULT_ROUTE_GROUPS];
+    const allowedAgentIds = dedupeAgentIds(args.allowedAgentIds ?? []);
+
+    if (allowedRouteGroups.length === 0) {
+      throw new Error("API key requires at least one allowed route group");
+    }
+    if (keyType === "agent_scoped" && allowedAgentIds.length === 0) {
+      throw new Error("Agent-scoped keys require at least one allowed agent");
+    }
+    await assertAgentOwnership(ctx, ctx.userId, allowedAgentIds);
 
     await ctx.db.insert("apiKeys", {
       userId: ctx.userId,
       name: args.name,
       keyHash,
       keyPrefix,
+      keyType,
+      allowedAgentIds: allowedAgentIds.length > 0 ? allowedAgentIds : undefined,
+      allowedRouteGroups,
       scopes: args.scopes,
       rateLimitPerMinute: args.rateLimitPerMinute ?? 60,
       isActive: true,
@@ -95,6 +130,10 @@ export const rotate = authedMutation({
       name: existingKey.name,
       keyHash,
       keyPrefix,
+      keyType: existingKey.keyType ?? "user_universal",
+      allowedAgentIds: existingKey.allowedAgentIds,
+      allowedRouteGroups:
+        existingKey.allowedRouteGroups ?? [...DEFAULT_ROUTE_GROUPS],
       scopes: existingKey.scopes,
       rateLimitPerMinute: existingKey.rateLimitPerMinute,
       isActive: true,
@@ -150,4 +189,28 @@ async function generateHashedKey(): Promise<{
     .join("");
 
   return { rawKey, keyHash, keyPrefix: rawKey.slice(0, 12) };
+}
+
+async function assertAgentOwnership(
+  ctx: {
+    db: {
+      get: (id: Id<"agents">) => Promise<{ userId: Id<"users"> } | null>;
+    };
+  },
+  userId: Id<"users">,
+  allowedAgentIds: Array<Id<"agents">>
+) {
+  if (allowedAgentIds.length === 0) return;
+
+  const agents = await Promise.all(
+    allowedAgentIds.map((agentId) => ctx.db.get(agentId))
+  );
+  const invalidAgent = agents.find((agent) => !agent || agent.userId !== userId);
+  if (invalidAgent) {
+    throw new Error("One or more selected agents do not belong to this user");
+  }
+}
+
+function dedupeAgentIds(agentIds: Array<Id<"agents">>): Array<Id<"agents">> {
+  return Array.from(new Set(agentIds));
 }

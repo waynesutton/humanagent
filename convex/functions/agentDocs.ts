@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { query } from "../_generated/server";
+import { api } from "../_generated/api";
 
 // ============================================================
 // Agent docs contract builder: single source for docs.md,
@@ -105,6 +106,60 @@ export const getDocsPayload = query({
   },
 });
 
+// Public query helpers for frontend routes that need docs content
+// while running through the SPA router in local development.
+export const getSitemapContent = query({
+  args: { username: v.string() },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, { username }): Promise<string | null> => {
+    const payload: DocsPayload | null = await ctx.runQuery(
+      api.functions.agentDocs.getDocsPayload,
+      { username }
+    );
+    if (!payload) return null;
+    return renderSitemapMd(payload);
+  },
+});
+
+export const getApiDocsContent = query({
+  args: { username: v.string() },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, { username }): Promise<string | null> => {
+    const payload: DocsPayload | null = await ctx.runQuery(
+      api.functions.agentDocs.getDocsPayload,
+      { username }
+    );
+    if (!payload) return null;
+    return renderDocsMd(payload);
+  },
+});
+
+export const getToolsDocsContent = query({
+  args: { username: v.string() },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, { username }): Promise<string | null> => {
+    const payload: DocsPayload | null = await ctx.runQuery(
+      api.functions.agentDocs.getDocsPayload,
+      { username }
+    );
+    if (!payload) return null;
+    return renderToolsMd(payload);
+  },
+});
+
+export const getOpenApiContent = query({
+  args: { username: v.string() },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, { username }): Promise<string | null> => {
+    const payload: DocsPayload | null = await ctx.runQuery(
+      api.functions.agentDocs.getDocsPayload,
+      { username }
+    );
+    if (!payload) return null;
+    return JSON.stringify(renderOpenApiJson(payload), null, 2);
+  },
+});
+
 // ============================================================
 // Content renderers (pure functions, no DB access)
 // ============================================================
@@ -175,6 +230,14 @@ export function renderDocsMd(data: DocsPayload): string {
   lines.push("Authorization: Bearer YOUR_API_KEY");
   lines.push("```");
   lines.push("");
+  lines.push("Required scopes:");
+  lines.push("- API REST message routes require `api:call`");
+  lines.push("- MCP JSON-RPC routes require `mcp:call`");
+  lines.push("");
+  lines.push("Route group restrictions:");
+  lines.push("- Keys can optionally be limited by route groups (`api`, `mcp`, `docs`, `skills`)");
+  lines.push("- Discovery docs and sitemap routes are public");
+  lines.push("");
 
   lines.push("## Content negotiation");
   lines.push("");
@@ -196,6 +259,8 @@ export function renderDocsMd(data: DocsPayload): string {
     lines.push("");
     lines.push(`\`POST ${baseUrl}/api/v1/agents/${username}/messages\``);
     lines.push("");
+    lines.push("Scope: `api:call`");
+    lines.push("");
     lines.push("**Request body:**");
     lines.push("```json");
     lines.push(`{ "content": "Your message here" }`);
@@ -216,6 +281,7 @@ export function renderDocsMd(data: DocsPayload): string {
   // Per-agent endpoints
   for (const agent of agents) {
     const vis = agent.publicConnect ?? VIS_DEFAULT;
+
     if (!vis.showApi) continue;
 
     lines.push(`### ${agent.name} (/${agent.slug})`);
@@ -226,11 +292,14 @@ export function renderDocsMd(data: DocsPayload): string {
     }
     lines.push(`\`POST ${baseUrl}/api/v1/agents/${username}/${agent.slug}/messages\``);
     lines.push("");
+    lines.push("Scope: `api:call`");
+    lines.push("");
     lines.push("Same request/response shape as the default endpoint above.");
     lines.push("");
 
     if (vis.showMcp) {
       lines.push(`**MCP Server**: \`${baseUrl}/mcp/u/${username}/${agent.slug}\``);
+      lines.push("**MCP scope**: `mcp:call`");
       lines.push("");
     }
     if (vis.showEmail && agent.agentEmail && userPrivacy?.showEmail !== false) {
@@ -271,6 +340,11 @@ export function renderToolsMd(data: DocsPayload): string {
   lines.push(`# ${displayName || username} Tools`);
   lines.push("");
   lines.push("Describes available operations, input schemas, and error modes.");
+  lines.push("");
+  lines.push("Auth model:");
+  lines.push("- API tool calls require `api:call`");
+  lines.push("- MCP tool calls require `mcp:call`");
+  lines.push("- Docs and sitemap routes remain public");
   lines.push("");
 
   // Built-in chat tool (always available if endpoints are visible)
@@ -338,8 +412,12 @@ export function renderOpenApiJson(data: DocsPayload): object {
     paths[`/api/v1/agents/${username}/messages`] = {
       post: {
         summary: `Send a message to ${displayName || username}'s default agent`,
+        description:
+          "Requires Bearer token with `api:call` scope and `api` route-group access.",
         operationId: "sendMessage",
         security: [{ bearerAuth: [] }],
+        "x-requiredScopes": ["api:call"],
+        "x-routeGroup": "api",
         requestBody: {
           required: true,
           content: {
@@ -377,13 +455,45 @@ export function renderOpenApiJson(data: DocsPayload): object {
   // Per-agent message endpoints
   for (const agent of agents) {
     const vis = agent.publicConnect ?? VIS_DEFAULT;
+
+    paths[`/api/v1/agents/${username}/${agent.slug}`] = {
+      get: {
+        summary: `Get ${agent.name} capabilities`,
+        description:
+          "Public endpoint. No API key required. Returns this agent persona capability contract.",
+        operationId: `getCapabilities_${agent.slug}`,
+        parameters: [
+          {
+            name: "Accept",
+            in: "header",
+            description: "Use text/markdown for token-efficient response",
+            schema: { type: "string", default: "application/json" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Agent capabilities (JSON or markdown depending on Accept header)",
+            content: {
+              "application/json": { schema: { type: "object" } },
+              "text/markdown": { schema: { type: "string" } },
+            },
+          },
+          "404": { description: "Agent not found" },
+        },
+      },
+    };
+
     if (!vis.showApi) continue;
 
     paths[`/api/v1/agents/${username}/${agent.slug}/messages`] = {
       post: {
         summary: `Send a message to ${agent.name}`,
+        description:
+          "Requires Bearer token with `api:call` scope and `api` route-group access.",
         operationId: `sendMessage_${agent.slug}`,
         security: [{ bearerAuth: [] }],
+        "x-requiredScopes": ["api:call"],
+        "x-routeGroup": "api",
         requestBody: {
           required: true,
           content: {
@@ -422,6 +532,8 @@ export function renderOpenApiJson(data: DocsPayload): object {
   paths[`/api/v1/agents/${username}`] = {
     get: {
       summary: `Get ${displayName || username}'s agent capabilities`,
+      description:
+        "Public endpoint. No API key required. Use `Accept: text/markdown` for token-efficient responses.",
       operationId: "getCapabilities",
       parameters: [
         {
@@ -459,7 +571,8 @@ export function renderOpenApiJson(data: DocsPayload): object {
         bearerAuth: {
           type: "http",
           scheme: "bearer",
-          description: "API key from HumanAgent dashboard",
+          description:
+            "API key from HumanAgent dashboard. REST message routes require `api:call`. MCP routes (`/mcp/u/...`) require `mcp:call` and are documented in docs.md/tools.md.",
         },
       },
     },

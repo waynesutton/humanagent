@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
 import { Doc, Id } from "../../convex/_generated/dataModel";
 import { notify } from "../lib/notify";
+import { platformApi } from "../lib/platformApi";
 
 // Type aliases for cleaner code
 type BoardColumn = Doc<"boardColumns">;
@@ -16,6 +16,12 @@ interface Task {
   status: string;
   boardColumnId?: Id<"boardColumns">;
   agentId?: Id<"agents">;
+  requester?: {
+    userId?: Id<"users">;
+    username?: string;
+    name?: string;
+    agentName?: string;
+  };
   isArchived?: boolean;
   archivedAt?: number;
   createdAt: number;
@@ -38,23 +44,24 @@ interface TaskAttachment {
 
 
 export function BoardPage() {
-  const columns = useQuery(api.functions.board.getColumns);
-  const tasks = useQuery(api.functions.board.getTasks);
-  const archivedTasks = useQuery(api.functions.board.getArchivedTasks);
-  const agents = useQuery(api.functions.agents.list);
-  const createTask = useMutation(api.functions.board.createTask);
-  const moveTask = useMutation(api.functions.board.moveTask);
-  const updateTask = useMutation(api.functions.board.updateTask);
-  const deleteTask = useMutation(api.functions.board.deleteTask);
-  const archiveTask = useMutation(api.functions.board.archiveTask);
-  const unarchiveTask = useMutation(api.functions.board.unarchiveTask);
-  const archiveCompletedTasks = useMutation(api.functions.board.archiveCompletedTasks);
-  const deleteArchivedTasks = useMutation(api.functions.board.deleteArchivedTasks);
-  const addTaskComment = useMutation(api.functions.board.addTaskComment);
+  const columns = useQuery(platformApi.convex.board.getColumns);
+  const tasks = useQuery(platformApi.convex.board.getTasks);
+  const archivedTasks = useQuery(platformApi.convex.board.getArchivedTasks);
+  const agents = useQuery(platformApi.convex.agents.list);
+  const createTask = useMutation(platformApi.convex.board.createTask);
+  const moveTask = useMutation(platformApi.convex.board.moveTask);
+  const updateTask = useMutation(platformApi.convex.board.updateTask);
+  const deleteTask = useMutation(platformApi.convex.board.deleteTask);
+  const archiveTask = useMutation(platformApi.convex.board.archiveTask);
+  const unarchiveTask = useMutation(platformApi.convex.board.unarchiveTask);
+  const archiveCompletedTasks = useMutation(platformApi.convex.board.archiveCompletedTasks);
+  const deleteArchivedTasks = useMutation(platformApi.convex.board.deleteArchivedTasks);
+  const addTaskComment = useMutation(platformApi.convex.board.addTaskComment);
   const generateTaskAttachmentUploadUrl = useMutation(
-    api.functions.board.generateTaskAttachmentUploadUrl
+    platformApi.convex.board.generateTaskAttachmentUploadUrl
   );
-  const addTaskAttachment = useMutation(api.functions.board.addTaskAttachment);
+  const addTaskAttachment = useMutation(platformApi.convex.board.addTaskAttachment);
+  const ensureDefaultColumns = useMutation(platformApi.convex.board.ensureDefaultColumns);
 
   // Create task form
   const [newTaskText, setNewTaskText] = useState("");
@@ -79,13 +86,21 @@ export function BoardPage() {
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
 
   const taskComments = useQuery(
-    api.functions.board.getTaskComments,
+    platformApi.convex.board.getTaskComments,
     detailsTaskId ? { taskId: detailsTaskId } : "skip"
   ) as TaskComment[] | undefined;
   const taskAttachments = useQuery(
-    api.functions.board.getTaskAttachments,
+    platformApi.convex.board.getTaskAttachments,
     detailsTaskId ? { taskId: detailsTaskId } : "skip"
   ) as TaskAttachment[] | undefined;
+
+  useEffect(() => {
+    if (!columns) return;
+    const hasTodo = columns.some((column: BoardColumn) => column.name === "Todo");
+    if (!hasTodo) {
+      void ensureDefaultColumns({});
+    }
+  }, [columns, ensureDefaultColumns]);
 
   async function handleCreateTask(e: React.FormEvent) {
     e.preventDefault();
@@ -703,6 +718,11 @@ function TaskCard({
   onArchive: () => void;
   isDragging: boolean;
 }) {
+  const requestedByLabel = task.requester
+    ? `Requested by ${task.requester.name || (task.requester.username ? `@${task.requester.username}` : "user")}`
+    : null;
+  const requesterAgentLabel = task.requester?.agentName ? `via ${task.requester.agentName}` : null;
+
   return (
     <div
       draggable
@@ -760,6 +780,11 @@ function TaskCard({
               {agentName}
             </span>
           )}
+          {requestedByLabel && (
+            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs text-ink-1" title={requesterAgentLabel ?? undefined}>
+              {requestedByLabel}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-ink-2">{formatDate(task.createdAt)}</span>
@@ -783,6 +808,11 @@ function ArchivedTaskCard({
   onRestore: () => void;
   onDelete: () => void;
 }) {
+  const requestedByLabel = task.requester
+    ? `Requested by ${task.requester.name || (task.requester.username ? `@${task.requester.username}` : "user")}`
+    : null;
+  const requesterAgentLabel = task.requester?.agentName ? `via ${task.requester.agentName}` : null;
+
   return (
     <div className="group rounded-lg border border-surface-3 bg-surface-1 p-3 opacity-75 hover:opacity-100 transition-opacity">
       <div className="flex items-start justify-between gap-2">
@@ -825,6 +855,11 @@ function ArchivedTaskCard({
           {agentName && (
             <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs text-ink-2">
               {agentName}
+            </span>
+          )}
+          {requestedByLabel && (
+            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs text-ink-1" title={requesterAgentLabel ?? undefined}>
+              {requestedByLabel}
             </span>
           )}
         </div>

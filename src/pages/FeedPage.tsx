@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
 import { FeedTimelineItem, type FeedTimelineItemData } from "../components/feed/FeedTimelineItem";
 import { notify } from "../lib/notify";
+import { platformApi } from "../lib/platformApi";
 
 type FeedItem = FeedTimelineItemData & { 
   isPublic: boolean;
@@ -14,15 +14,15 @@ type FeedItem = FeedTimelineItemData & {
 };
 
 export function FeedPage() {
-  const feedItems = useQuery(api.functions.feed.getMyFeed, { limit: 50 });
-  const viewer = useQuery(api.functions.users.viewer);
+  const feedItems = useQuery(platformApi.convex.feed.getMyFeed, { limit: 50 });
+  const viewer = useQuery(platformApi.convex.auth.viewer);
   
   // Mutations
-  const createPost = useMutation(api.functions.feed.createPost);
-  const updatePost = useMutation(api.functions.feed.updatePost);
-  const hidePost = useMutation(api.functions.feed.hidePost);
-  const archivePost = useMutation(api.functions.feed.archivePost);
-  const deletePost = useMutation(api.functions.feed.deletePost);
+  const createPost = useMutation(platformApi.convex.feed.createPost);
+  const updatePost = useMutation(platformApi.convex.feed.updatePost);
+  const hidePost = useMutation(platformApi.convex.feed.hidePost);
+  const archivePost = useMutation(platformApi.convex.feed.archivePost);
+  const deletePost = useMutation(platformApi.convex.feed.deletePost);
 
   // New post form state
   const [showNewPost, setShowNewPost] = useState(false);
@@ -183,7 +183,7 @@ export function FeedPage() {
               <textarea
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
-                placeholder="Content (optional)"
+                placeholder="Content (optional, Markdown and MDX supported)"
                 className="input resize-none"
                 rows={3}
               />
@@ -281,7 +281,7 @@ export function FeedPage() {
                 <textarea
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
-                  placeholder="Content (optional)"
+                  placeholder="Content (optional, Markdown and MDX supported)"
                   className="input resize-none"
                   rows={3}
                 />

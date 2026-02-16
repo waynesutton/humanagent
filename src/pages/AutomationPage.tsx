@@ -13,6 +13,18 @@ type ThoughtType =
   | "reflection"
   | "goal_update";
 
+type AgentRow = {
+  _id: Id<"agents">;
+  name: string;
+};
+
+type ThoughtRow = {
+  _id: Id<"agentThoughts">;
+  type: ThoughtType;
+  createdAt: number;
+  content: string;
+};
+
 export function AutomationPage() {
   const [tab, setTab] = useState<AutomationTab>("a2a");
   const [selectedAgentId, setSelectedAgentId] = useState<Id<"agents"> | null>(null);
@@ -20,7 +32,7 @@ export function AutomationPage() {
 
   const inboxThreads = useQuery(api.functions.a2a.getInboxThreads, { limit: 20 });
   const outboxThreads = useQuery(api.functions.a2a.getOutboxThreads, { limit: 20 });
-  const agents = useQuery(api.functions.agents.list);
+  const agents = useQuery(api.functions.agents.list) as AgentRow[] | undefined;
 
   const effectiveAgentId = useMemo(() => {
     if (selectedAgentId) return selectedAgentId;
@@ -37,7 +49,7 @@ export function AutomationPage() {
           type: selectedType === "all" ? undefined : selectedType,
         }
       : "skip"
-  );
+  ) as ThoughtRow[] | undefined;
 
   return (
     <DashboardLayout>

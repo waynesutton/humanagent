@@ -2,8 +2,20 @@ import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
 
+type RateLimitDashboard = {
+  activeWindows: number;
+  totalRequestsInWindow: number;
+  topKeys: Array<{
+    key: string;
+    count: number;
+    resetAt: number;
+  }>;
+};
+
 export function RateLimitsPage() {
-  const dashboard = useQuery(api.functions.rateLimits.getDashboard);
+  const dashboard = useQuery(
+    api.functions.rateLimits.getDashboard
+  ) as RateLimitDashboard | undefined;
 
   return (
     <DashboardLayout>

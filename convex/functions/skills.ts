@@ -267,7 +267,7 @@ function runSecurityScan(payload: string): Array<SecurityMatch> {
 // Public queries
 // ============================================================
 
-// Get current user's skills (all skills, or filtered by agent)
+// Get current user's skills (all skills, or filtered by agent via junction table)
 export const list = authedQuery({
   args: {
     agentId: v.optional(v.id("agents")),
@@ -275,17 +275,56 @@ export const list = authedQuery({
   returns: v.array(v.any()),
   handler: async (ctx, { agentId }) => {
     if (agentId) {
-      // Get skills for specific agent
-      return await ctx.db
+      // Get skill IDs linked to this agent via junction table
+      const assignments = await ctx.db
+        .query("skillAgents")
+        .withIndex("by_agentId", (q) => q.eq("agentId", agentId))
+        .collect();
+
+      // Also check legacy agentId field for backwards compat
+      const legacySkills = await ctx.db
         .query("skills")
         .withIndex("by_agentId", (q) => q.eq("agentId", agentId))
         .collect();
+
+      const junctionSkills = await Promise.all(
+        assignments.map((a) => ctx.db.get(a.skillId))
+      );
+
+      // Merge and deduplicate
+      const seen = new Set<string>();
+      const result = [];
+      for (const skill of [...junctionSkills, ...legacySkills]) {
+        if (skill && !seen.has(skill._id)) {
+          seen.add(skill._id);
+          result.push(skill);
+        }
+      }
+      return result;
     }
     // Get all user's skills
     return await ctx.db
       .query("skills")
       .withIndex("by_userId", (q) => q.eq("userId", ctx.userId))
       .collect();
+  },
+});
+
+// Get all skill-agent assignments for the current user (for the UI)
+export const listSkillAgents = authedQuery({
+  args: {},
+  returns: v.array(
+    v.object({
+      skillId: v.id("skills"),
+      agentId: v.id("agents"),
+    })
+  ),
+  handler: async (ctx) => {
+    const assignments = await ctx.db
+      .query("skillAgents")
+      .withIndex("by_userId", (q) => q.eq("userId", ctx.userId))
+      .collect();
+    return assignments.map((a) => ({ skillId: a.skillId, agentId: a.agentId }));
   },
 });
 
@@ -337,7 +376,7 @@ export const getPublicSkill = query({
   },
 });
 
-// Public: get a published skill for a specific public agent slug.
+// Public: get published skills for a specific public agent slug.
 export const getPublicSkillByAgent = query({
   args: { username: v.string(), slug: v.string() },
   returns: v.union(v.any(), v.null()),
@@ -354,11 +393,32 @@ export const getPublicSkillByAgent = query({
       .first();
     if (!agent || !agent.isPublic) return null;
 
-    const agentSkills = await ctx.db
+    // Check junction table for skills linked to this agent
+    const junctionAssignments = await ctx.db
+      .query("skillAgents")
+      .withIndex("by_agentId", (q) => q.eq("agentId", agent._id))
+      .take(100);
+    const junctionSkills = await Promise.all(
+      junctionAssignments.map((a) => ctx.db.get(a.skillId))
+    );
+
+    // Also check legacy agentId field
+    const legacySkills = await ctx.db
       .query("skills")
       .withIndex("by_agentId", (q) => q.eq("agentId", agent._id))
       .take(100);
-    const publishedAgentSkill = agentSkills.find((s) => s.isPublished);
+
+    // Merge and deduplicate
+    const seen = new Set<string>();
+    const allAgentSkills = [];
+    for (const skill of [...junctionSkills, ...legacySkills]) {
+      if (skill && !seen.has(skill._id)) {
+        seen.add(skill._id);
+        allAgentSkills.push(skill);
+      }
+    }
+
+    const publishedAgentSkill = allAgentSkills.find((s) => s.isPublished);
 
     // Backwards-compatible fallback: use user-level published skill.
     const fallbackPublishedSkill = publishedAgentSkill
@@ -388,10 +448,11 @@ export const getPublicSkillByAgent = query({
 // Mutations
 // ============================================================
 
-// Create a new skill (for multi-skill support)
+// Create a new skill, optionally assigned to one or more agents
 export const create = authedMutation({
   args: {
-    agentId: v.optional(v.id("agents")),
+    agentId: v.optional(v.id("agents")), // Legacy: single agent
+    agentIds: v.optional(v.array(v.id("agents"))), // Multi-agent assignment
     identity: v.object({
       name: v.string(),
       bio: v.string(),
@@ -417,17 +478,21 @@ export const create = authedMutation({
   },
   returns: v.id("skills"),
   handler: async (ctx, args) => {
-    // If agentId provided, verify ownership
-    if (args.agentId) {
-      const agent = await ctx.db.get(args.agentId);
+    // Resolve agents list: prefer agentIds, fall back to single agentId
+    const resolvedAgentIds = args.agentIds ?? (args.agentId ? [args.agentId] : []);
+
+    // Verify ownership of all agents
+    for (const agentId of resolvedAgentIds) {
+      const agent = await ctx.db.get(agentId);
       if (!agent || agent.userId !== ctx.userId) {
         throw new Error("Agent not found");
       }
     }
 
+    const now = Date.now();
     const skillId = await ctx.db.insert("skills", {
       userId: ctx.userId,
-      agentId: args.agentId,
+      agentId: resolvedAgentIds[0] ?? undefined, // Legacy field
       version: 1,
       identity: args.identity,
       capabilities: args.capabilities ?? [],
@@ -445,8 +510,20 @@ export const create = authedMutation({
       toolDeclarations: [],
       isPublished: false,
       isActive: true,
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
+
+    // Create junction table entries for each assigned agent
+    await Promise.all(
+      resolvedAgentIds.map((agentId) =>
+        ctx.db.insert("skillAgents", {
+          skillId,
+          agentId,
+          userId: ctx.userId,
+          createdAt: now,
+        })
+      )
+    );
 
     // Schedule llms.txt regeneration
     await ctx.scheduler.runAfter(0, internal.functions.llmsTxt.regenerate, {
@@ -461,7 +538,8 @@ export const importSkills = authedMutation({
   args: {
     source: v.string(),
     payload: v.string(),
-    agentId: v.optional(v.id("agents")),
+    agentId: v.optional(v.id("agents")), // Legacy: single agent
+    agentIds: v.optional(v.array(v.id("agents"))), // Multi-agent assignment
     defaultIsActive: v.optional(v.boolean()),
   },
   returns: v.object({
@@ -475,8 +553,12 @@ export const importSkills = authedMutation({
       throw new Error("Import payload is too large");
     }
 
-    if (args.agentId) {
-      const agent = await ctx.db.get(args.agentId);
+    // Resolve agents list: prefer agentIds, fall back to single agentId
+    const resolvedAgentIds = args.agentIds ?? (args.agentId ? [args.agentId] : []);
+
+    // Verify ownership of all agents
+    for (const agentId of resolvedAgentIds) {
+      const agent = await ctx.db.get(agentId);
       if (!agent || agent.userId !== ctx.userId) {
         throw new Error("Agent not found");
       }
@@ -520,7 +602,7 @@ export const importSkills = authedMutation({
       candidates.map((candidate) =>
         ctx.db.insert("skills", {
           userId: ctx.userId,
-          agentId: args.agentId,
+          agentId: resolvedAgentIds[0] ?? undefined, // Legacy field
           version: 1,
           identity: {
             name: candidate.name,
@@ -545,6 +627,22 @@ export const importSkills = authedMutation({
         })
       )
     );
+
+    // Create junction table entries for each imported skill and each agent
+    if (resolvedAgentIds.length > 0) {
+      await Promise.all(
+        importedSkillIds.flatMap((skillId) =>
+          resolvedAgentIds.map((agentId) =>
+            ctx.db.insert("skillAgents", {
+              skillId,
+              agentId,
+              userId: ctx.userId,
+              createdAt: now,
+            })
+          )
+        )
+      );
+    }
 
     await ctx.scheduler.runAfter(0, internal.functions.llmsTxt.regenerate, {
       userId: ctx.userId,
@@ -626,7 +724,7 @@ export const update = authedMutation({
   },
 });
 
-// Delete a skill
+// Delete a skill and its agent assignments
 export const remove = authedMutation({
   args: { skillId: v.id("skills") },
   returns: v.null(),
@@ -635,6 +733,14 @@ export const remove = authedMutation({
     if (!skill || skill.userId !== ctx.userId) {
       throw new Error("Skill not found");
     }
+
+    // Remove all junction table entries for this skill
+    const assignments = await ctx.db
+      .query("skillAgents")
+      .withIndex("by_skillId", (q) => q.eq("skillId", skillId))
+      .collect();
+    await Promise.all(assignments.map((a) => ctx.db.delete(a._id)));
+
     await ctx.db.delete(skillId);
 
     // Schedule llms.txt regeneration
@@ -645,7 +751,64 @@ export const remove = authedMutation({
   },
 });
 
-// Assign skill to an agent
+// Set which agents a skill is assigned to (replaces all current assignments)
+export const setSkillAgents = authedMutation({
+  args: {
+    skillId: v.id("skills"),
+    agentIds: v.array(v.id("agents")),
+  },
+  returns: v.null(),
+  handler: async (ctx, { skillId, agentIds }) => {
+    const skill = await ctx.db.get(skillId);
+    if (!skill || skill.userId !== ctx.userId) {
+      throw new Error("Skill not found");
+    }
+
+    // Verify all agents belong to user
+    for (const agentId of agentIds) {
+      const agent = await ctx.db.get(agentId);
+      if (!agent || agent.userId !== ctx.userId) {
+        throw new Error("Agent not found");
+      }
+    }
+
+    // Get current assignments from junction table
+    const current = await ctx.db
+      .query("skillAgents")
+      .withIndex("by_skillId", (q) => q.eq("skillId", skillId))
+      .collect();
+
+    const currentAgentIds = new Set(current.map((a) => a.agentId));
+    const targetAgentIds = new Set(agentIds);
+
+    // Remove assignments no longer needed
+    const toRemove = current.filter((a) => !targetAgentIds.has(a.agentId));
+    await Promise.all(toRemove.map((a) => ctx.db.delete(a._id)));
+
+    // Add new assignments
+    const now = Date.now();
+    const toAdd = agentIds.filter((id) => !currentAgentIds.has(id));
+    await Promise.all(
+      toAdd.map((agentId) =>
+        ctx.db.insert("skillAgents", {
+          skillId,
+          agentId,
+          userId: ctx.userId,
+          createdAt: now,
+        })
+      )
+    );
+
+    // Sync legacy agentId field (first assigned agent or undefined)
+    await ctx.db.patch(skillId, {
+      agentId: agentIds[0] ?? undefined,
+      updatedAt: now,
+    });
+    return null;
+  },
+});
+
+// Legacy: assign skill to a single agent (kept for backwards compat)
 export const assignToAgent = authedMutation({
   args: {
     skillId: v.id("skills"),
@@ -658,11 +821,26 @@ export const assignToAgent = authedMutation({
       throw new Error("Skill not found");
     }
 
-    // If assigning to an agent, verify ownership
     if (agentId) {
       const agent = await ctx.db.get(agentId);
       if (!agent || agent.userId !== ctx.userId) {
         throw new Error("Agent not found");
+      }
+
+      // Also add to junction table if not already there
+      const existing = await ctx.db
+        .query("skillAgents")
+        .withIndex("by_skillId_agentId", (q) =>
+          q.eq("skillId", skillId).eq("agentId", agentId)
+        )
+        .first();
+      if (!existing) {
+        await ctx.db.insert("skillAgents", {
+          skillId,
+          agentId,
+          userId: ctx.userId,
+          createdAt: Date.now(),
+        });
       }
     }
 

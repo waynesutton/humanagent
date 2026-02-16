@@ -4,6 +4,7 @@ import { internal, api } from "./_generated/api";
 import { auth } from "./auth";
 import { corsRouter } from "convex-helpers/server/cors";
 import type { Id } from "./_generated/dataModel";
+import type { ActionCtx } from "./_generated/server";
 
 const http = httpRouter();
 
@@ -16,6 +17,138 @@ const cors = corsRouter(http, {
   allowedHeaders: ["Content-Type", "Authorization"],
   allowCredentials: false,
 });
+
+type RouteGroup = "api" | "mcp" | "docs" | "skills";
+
+type RouteAccessOptions = {
+  targetUserId: Id<"users">;
+  routeGroup: RouteGroup;
+  requiredScope: "api:call" | "mcp:call";
+  targetAgentId?: Id<"agents">;
+};
+
+type AuthenticatedApiKey = {
+  keyPrefix: string;
+  userId: Id<"users">;
+  scopes: Array<string>;
+  allowedAgentIds?: Array<Id<"agents">>;
+  allowedRouteGroups?: Array<RouteGroup>;
+};
+
+const DEFAULT_ALLOWED_ROUTE_GROUPS: Array<RouteGroup> = [
+  "api",
+  "mcp",
+  "docs",
+  "skills",
+];
+
+function hasRequiredScope(
+  scopes: Array<string>,
+  requiredScope: "api:call" | "mcp:call"
+) {
+  if (scopes.includes(requiredScope)) return true;
+  // Backward compatibility for legacy keys created before granular scopes.
+  if (scopes.includes("admin") || scopes.includes("write")) return true;
+  return false;
+}
+
+async function enforceApiKeyAccess(
+  ctx: ActionCtx,
+  request: Request,
+  options: RouteAccessOptions
+): Promise<
+  | { ok: true; apiKey: { keyPrefix: string; userId: Id<"users"> } }
+  | { ok: false; response: Response }
+> {
+  const authHeader = request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return {
+      ok: false,
+      response: apiError(401, "auth_required", "Bearer token required"),
+    };
+  }
+
+  const token = authHeader.replace("Bearer ", "");
+  const encoder = new TextEncoder();
+  const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(token));
+  const tokenHash = Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
+  const apiKey = (await ctx.runQuery(internal.functions.apiKeys.validateToken, {
+    tokenHash,
+  })) as AuthenticatedApiKey | null;
+
+  if (!apiKey) {
+    return {
+      ok: false,
+      response: apiError(
+        401,
+        "invalid_token",
+        "API key is invalid, revoked, or expired"
+      ),
+    };
+  }
+
+  if (apiKey.userId !== options.targetUserId) {
+    return {
+      ok: false,
+      response: apiError(
+        403,
+        "forbidden",
+        "API key does not belong to this user namespace"
+      ),
+    };
+  }
+
+  const allowedRouteGroups = (apiKey.allowedRouteGroups ??
+    DEFAULT_ALLOWED_ROUTE_GROUPS) as Array<RouteGroup>;
+  if (!allowedRouteGroups.includes(options.routeGroup)) {
+    return {
+      ok: false,
+      response: apiError(
+        403,
+        "forbidden",
+        `API key is not allowed for ${options.routeGroup} routes`
+      ),
+    };
+  }
+
+  if (!hasRequiredScope(apiKey.scopes, options.requiredScope)) {
+    return {
+      ok: false,
+      response: apiError(
+        403,
+        "forbidden",
+        `Missing required scope: ${options.requiredScope}`
+      ),
+    };
+  }
+
+  const allowedAgentIds = (apiKey.allowedAgentIds ?? []) as Array<Id<"agents">>;
+  if (
+    options.targetAgentId &&
+    allowedAgentIds.length > 0 &&
+    !allowedAgentIds.includes(options.targetAgentId)
+  ) {
+    return {
+      ok: false,
+      response: apiError(
+        403,
+        "forbidden",
+        "API key is not allowed to access this agent"
+      ),
+    };
+  }
+
+  return {
+    ok: true,
+    apiKey: {
+      keyPrefix: apiKey.keyPrefix,
+      userId: apiKey.userId,
+    },
+  };
+}
 
 // Basic service health check endpoint for external monitoring.
 http.route({
@@ -48,32 +181,6 @@ cors.route({
         return apiError(400, "invalid_request", "Username required");
       }
 
-      // Validate API key (fail closed)
-      const authHeader = request.headers.get("Authorization");
-      if (!authHeader?.startsWith("Bearer ")) {
-        return apiError(401, "auth_required", "Bearer token required");
-      }
-
-      const token = authHeader.replace("Bearer ", "");
-      const encoder = new TextEncoder();
-      const hashBuffer = await crypto.subtle.digest(
-        "SHA-256",
-        encoder.encode(token)
-      );
-      const tokenHash = Array.from(new Uint8Array(hashBuffer))
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
-
-      const apiKey = await ctx.runQuery(
-        internal.functions.apiKeys.validateToken,
-        { tokenHash }
-      );
-
-      // Reject invalid or expired keys
-      if (!apiKey) {
-        return apiError(401, "invalid_token", "API key is invalid, revoked, or expired");
-      }
-
       // Look up user
       const user = await ctx.runQuery(api.functions.users.getByUsername, {
         username,
@@ -90,6 +197,37 @@ cors.route({
         return apiError(404, "not_found", "No public agent configured for this user");
       }
 
+      const access = await enforceApiKeyAccess(ctx, request, {
+        targetUserId: user._id,
+        routeGroup: "api",
+        requiredScope: "api:call",
+        targetAgentId: defaultPublicAgent._id,
+      });
+      if (!access.ok) {
+        return access.response;
+      }
+
+      // Rate limit check: API channel
+      const userLimits = await ctx.runQuery(
+        internal.functions.rateLimits.getUserLimits,
+        { userId: user._id }
+      );
+      const rlKey = `user:${user._id}:api`;
+      const rlResult = await ctx.runMutation(
+        internal.functions.rateLimits.checkAndIncrement,
+        { key: rlKey, limit: userLimits.apiRequestsPerMinute }
+      );
+      if (!rlResult.allowed) {
+        return apiError(429, "rate_limited", "Rate limit exceeded", {
+          retryAfter: Math.ceil((rlResult.resetAt - Date.now()) / 1000),
+        });
+      }
+
+      // Token budget check
+      if (userLimits.tokensUsedThisMonth >= userLimits.tokenBudget) {
+        return apiError(429, "token_budget_exceeded", "Monthly token budget exceeded");
+      }
+
       // Parse body
       const body = (await request.json()) as { content?: string };
       if (!body.content) {
@@ -104,7 +242,7 @@ cors.route({
           agentId: defaultPublicAgent._id,
           message: body.content,
           channel: "api",
-          callerId: apiKey.keyPrefix,
+          callerId: access.apiKey.keyPrefix,
         }
       );
 
@@ -132,32 +270,6 @@ cors.route({
         return apiError(400, "invalid_request", "Username and slug are required");
       }
 
-      // Validate API key (fail closed)
-      const authHeader = request.headers.get("Authorization");
-      if (!authHeader?.startsWith("Bearer ")) {
-        return apiError(401, "auth_required", "Bearer token required");
-      }
-
-      const token = authHeader.replace("Bearer ", "");
-      const encoder = new TextEncoder();
-      const hashBuffer = await crypto.subtle.digest(
-        "SHA-256",
-        encoder.encode(token)
-      );
-      const tokenHash = Array.from(new Uint8Array(hashBuffer))
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
-
-      const apiKey = await ctx.runQuery(
-        internal.functions.apiKeys.validateToken,
-        { tokenHash }
-      );
-
-      // Reject invalid or expired keys
-      if (!apiKey) {
-        return apiError(401, "invalid_token", "API key is invalid, revoked, or expired");
-      }
-
       const user = await ctx.runQuery(api.functions.users.getByUsername, {
         username,
       });
@@ -173,6 +285,37 @@ cors.route({
         return apiError(404, "not_found", "Public agent not found for this slug");
       }
 
+      const access = await enforceApiKeyAccess(ctx, request, {
+        targetUserId: user._id,
+        routeGroup: "api",
+        requiredScope: "api:call",
+        targetAgentId: publicAgent._id,
+      });
+      if (!access.ok) {
+        return access.response;
+      }
+
+      // Rate limit check: API channel
+      const userLimitsSlug = await ctx.runQuery(
+        internal.functions.rateLimits.getUserLimits,
+        { userId: user._id }
+      );
+      const rlKeySlug = `user:${user._id}:api`;
+      const rlResultSlug = await ctx.runMutation(
+        internal.functions.rateLimits.checkAndIncrement,
+        { key: rlKeySlug, limit: userLimitsSlug.apiRequestsPerMinute }
+      );
+      if (!rlResultSlug.allowed) {
+        return apiError(429, "rate_limited", "Rate limit exceeded", {
+          retryAfter: Math.ceil((rlResultSlug.resetAt - Date.now()) / 1000),
+        });
+      }
+
+      // Token budget check
+      if (userLimitsSlug.tokensUsedThisMonth >= userLimitsSlug.tokenBudget) {
+        return apiError(429, "token_budget_exceeded", "Monthly token budget exceeded");
+      }
+
       const body = (await request.json()) as { content?: string };
       if (!body.content) {
         return apiError(400, "invalid_request", "content field required");
@@ -185,7 +328,7 @@ cors.route({
           agentId: publicAgent._id,
           message: body.content,
           channel: "api",
-          callerId: apiKey.keyPrefix,
+          callerId: access.apiKey.keyPrefix,
         }
       );
 
@@ -336,11 +479,14 @@ http.route({
   path: "/webhooks/agentmail",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
-    const signature = request.headers.get("x-agentmail-signature");
     const body = await request.text();
 
-    // Verify webhook signature
-    if (!signature || !(await verifyWebhookSignature(body, signature))) {
+    // Verify webhook signature (Svix first, with legacy fallback).
+    const isValidSignature = await verifyAgentmailWebhookSignature(
+      body,
+      request.headers
+    );
+    if (!isValidSignature) {
       // Skip audit log for invalid webhooks (no user context)
       console.log("AgentMail webhook rejected: invalid signature");
       return new Response("Invalid signature", { status: 401 });
@@ -823,6 +969,32 @@ cors.route({
         id: string | number | null;
       };
 
+      const access = await enforceApiKeyAccess(ctx, request, {
+        targetUserId: user._id,
+        routeGroup: "mcp",
+        requiredScope: "mcp:call",
+        targetAgentId: defaultPublicAgent._id,
+      });
+      if (!access.ok) {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: {
+              code: access.response.status === 401 ? -32001 : -32003,
+              message:
+                access.response.status === 401
+                  ? "Authentication required"
+                  : "Access denied for this MCP route",
+            },
+            id: rpcRequest.id,
+          }),
+          {
+            status: access.response.status,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
+
       // Handle MCP methods
       switch (rpcRequest.method) {
         case "initialize": {
@@ -880,6 +1052,37 @@ cors.route({
         }
 
         case "tools/call": {
+          // Rate limit check: MCP channel
+          const mcpLimits = await ctx.runQuery(
+            internal.functions.rateLimits.getUserLimits,
+            { userId: user._id }
+          );
+          const mcpRlKey = `user:${user._id}:mcp`;
+          const mcpRl = await ctx.runMutation(
+            internal.functions.rateLimits.checkAndIncrement,
+            { key: mcpRlKey, limit: mcpLimits.mcpRequestsPerMinute }
+          );
+          if (!mcpRl.allowed) {
+            return new Response(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                error: { code: -32000, message: "Rate limit exceeded" },
+                id: rpcRequest.id,
+              }),
+              { status: 429, headers: { "Content-Type": "application/json" } }
+            );
+          }
+          if (mcpLimits.tokensUsedThisMonth >= mcpLimits.tokenBudget) {
+            return new Response(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                error: { code: -32000, message: "Monthly token budget exceeded" },
+                id: rpcRequest.id,
+              }),
+              { status: 429, headers: { "Content-Type": "application/json" } }
+            );
+          }
+
           const params = rpcRequest.params as {
             name: string;
             arguments?: Record<string, unknown>;
@@ -904,7 +1107,7 @@ cors.route({
               agentId: defaultPublicAgent._id,
               message,
               channel: "mcp",
-              callerId: "mcp-client",
+              callerId: access.apiKey.keyPrefix,
             });
 
             return new Response(
@@ -926,7 +1129,7 @@ cors.route({
             agentId: defaultPublicAgent._id,
             message: `Execute tool: ${params.name} with arguments: ${JSON.stringify(params.arguments)}`,
             channel: "mcp",
-            callerId: "mcp-client",
+            callerId: access.apiKey.keyPrefix,
           });
 
           return new Response(
@@ -1020,6 +1223,32 @@ cors.route({
         id: string | number | null;
       };
 
+      const access = await enforceApiKeyAccess(ctx, request, {
+        targetUserId: user._id,
+        routeGroup: "mcp",
+        requiredScope: "mcp:call",
+        targetAgentId: publicAgent._id,
+      });
+      if (!access.ok) {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: {
+              code: access.response.status === 401 ? -32001 : -32003,
+              message:
+                access.response.status === 401
+                  ? "Authentication required"
+                  : "Access denied for this MCP route",
+            },
+            id: rpcRequest.id,
+          }),
+          {
+            status: access.response.status,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
+
       switch (rpcRequest.method) {
         case "initialize": {
           return new Response(
@@ -1073,6 +1302,37 @@ cors.route({
         }
 
         case "tools/call": {
+          // Rate limit check: MCP channel (slug endpoint)
+          const mcpSlugLimits = await ctx.runQuery(
+            internal.functions.rateLimits.getUserLimits,
+            { userId: user._id }
+          );
+          const mcpSlugRlKey = `user:${user._id}:mcp`;
+          const mcpSlugRl = await ctx.runMutation(
+            internal.functions.rateLimits.checkAndIncrement,
+            { key: mcpSlugRlKey, limit: mcpSlugLimits.mcpRequestsPerMinute }
+          );
+          if (!mcpSlugRl.allowed) {
+            return new Response(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                error: { code: -32000, message: "Rate limit exceeded" },
+                id: rpcRequest.id,
+              }),
+              { status: 429, headers: { "Content-Type": "application/json" } }
+            );
+          }
+          if (mcpSlugLimits.tokensUsedThisMonth >= mcpSlugLimits.tokenBudget) {
+            return new Response(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                error: { code: -32000, message: "Monthly token budget exceeded" },
+                id: rpcRequest.id,
+              }),
+              { status: 429, headers: { "Content-Type": "application/json" } }
+            );
+          }
+
           const params = rpcRequest.params as {
             name: string;
             arguments?: Record<string, unknown>;
@@ -1096,7 +1356,7 @@ cors.route({
               agentId: publicAgent._id,
               message,
               channel: "mcp",
-              callerId: "mcp-client",
+              callerId: access.apiKey.keyPrefix,
             });
 
             return new Response(
@@ -1117,7 +1377,7 @@ cors.route({
             agentId: publicAgent._id,
             message: `Execute tool: ${params.name} with arguments: ${JSON.stringify(params.arguments)}`,
             channel: "mcp",
-            callerId: "mcp-client",
+            callerId: access.apiKey.keyPrefix,
           });
 
           return new Response(
@@ -1656,6 +1916,87 @@ async function verifyWebhookSignature(
   return timingSafeEqualHex(expectedHex, providedHex);
 }
 
+async function verifyAgentmailWebhookSignature(
+  body: string,
+  headers: Headers
+): Promise<boolean> {
+  const svixId = headers.get("svix-id");
+  const svixSignature = headers.get("svix-signature");
+  const svixTimestamp = headers.get("svix-timestamp");
+
+  if (svixId && svixSignature && svixTimestamp) {
+    return await verifySvixSignature(body, svixId, svixTimestamp, svixSignature);
+  }
+
+  const legacySignature = headers.get("x-agentmail-signature");
+  if (!legacySignature) {
+    return false;
+  }
+  return await verifyWebhookSignature(body, legacySignature);
+}
+
+async function verifySvixSignature(
+  body: string,
+  svixId: string,
+  svixTimestamp: string,
+  svixSignature: string
+): Promise<boolean> {
+  const rawSecret = process.env.AGENTMAIL_WEBHOOK_SECRET;
+  if (!rawSecret) return false;
+
+  // Support canonical Svix secrets with `whsec_` prefix.
+  const secret = rawSecret.startsWith("whsec_")
+    ? rawSecret.slice("whsec_".length)
+    : rawSecret;
+  const secretBytes = decodeBase64(secret);
+  if (secretBytes.length === 0) return false;
+
+  // Basic replay protection with configurable tolerance (defaults to 5 minutes).
+  const timestampSeconds = Number.parseInt(svixTimestamp, 10);
+  const toleranceSeconds = Number.parseInt(
+    process.env.AGENTMAIL_WEBHOOK_TOLERANCE_SECONDS ?? "300",
+    10
+  );
+  if (!Number.isNaN(timestampSeconds) && Number.isFinite(toleranceSeconds)) {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    if (Math.abs(nowSeconds - timestampSeconds) > Math.max(0, toleranceSeconds)) {
+      return false;
+    }
+  }
+
+  const key = await crypto.subtle.importKey(
+    "raw",
+    secretBytes,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signedContent = `${svixId}.${svixTimestamp}.${body}`;
+  const digest = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(signedContent)
+  );
+  const expectedBase64 = bytesToBase64(new Uint8Array(digest));
+
+  const providedSignatures = parseSvixSignatures(svixSignature);
+  if (providedSignatures.length === 0) return false;
+
+  return providedSignatures.some((candidate) =>
+    timingSafeEqualString(expectedBase64, candidate)
+  );
+}
+
+function parseSvixSignatures(headerValue: string): Array<string> {
+  return headerValue
+    .split(/\s+/)
+    .flatMap((part) => part.split(","))
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    // Accept raw base64 tokens and version-prefixed values.
+    .filter((part) => part !== "v1" && part !== "v2");
+}
+
 function isHex(value: string): boolean {
   return /^[0-9a-fA-F]+$/.test(value) && value.length % 2 === 0;
 }
@@ -1673,6 +2014,14 @@ function decodeBase64(value: string): Uint8Array {
   }
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]!);
+  }
+  return btoa(binary);
+}
+
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -1680,6 +2029,15 @@ function bytesToHex(bytes: Uint8Array): string {
 }
 
 function timingSafeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) {
+    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return mismatch === 0;
+}
+
+function timingSafeEqualString(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let mismatch = 0;
   for (let i = 0; i < a.length; i++) {

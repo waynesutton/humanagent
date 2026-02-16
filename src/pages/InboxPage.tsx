@@ -5,10 +5,10 @@
  */
 import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
 import { Id } from "../../convex/_generated/dataModel";
 import { notify } from "../lib/notify";
+import { platformApi } from "../lib/platformApi";
 
 type ConversationStatus = "active" | "resolved" | "escalated";
 
@@ -29,18 +29,19 @@ interface Conversation {
 }
 
 export function InboxPage() {
-  const conversations = useQuery(api.functions.conversations.list, {});
+  const conversations = useQuery(platformApi.convex.conversations.list, {});
 
   const [selectedConversation, setSelectedConversation] = useState<Id<"conversations"> | null>(null);
   const [replyText, setReplyText] = useState("");
   const [filterChannel, setFilterChannel] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<ConversationStatus | "all">("all");
 
-  const sendReply = useMutation(api.functions.conversations.reply);
-  const updateStatus = useMutation(api.functions.conversations.updateStatus);
+  const sendReply = useMutation(platformApi.convex.conversations.reply);
+  const updateStatus = useMutation(platformApi.convex.conversations.updateStatus);
 
   // Filter conversations
   const filteredConversations = conversations?.filter((c: Conversation) => {
+    if (c.channel === "dashboard") return false;
     if (filterChannel !== "all" && c.channel !== filterChannel) return false;
     if (filterStatus !== "all" && c.status !== filterStatus) return false;
     return true;
@@ -145,7 +146,7 @@ export function InboxPage() {
             <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-3 border-t-accent" />
           </div>
         ) : (
-          <div className="flex h-full rounded-lg border border-surface-3 bg-white overflow-hidden">
+          <div className="flex h-full rounded-lg border border-surface-3 bg-surface-0 overflow-hidden">
             {/* Sidebar: Conversation list */}
             <div className="w-80 border-r border-surface-3 flex flex-col">
               {/* Filters */}

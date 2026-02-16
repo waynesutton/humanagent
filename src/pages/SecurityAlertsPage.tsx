@@ -2,9 +2,21 @@ import { useMemo } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
+import type { Id } from "../../convex/_generated/dataModel";
+
+type SecurityEvent = {
+  _id: Id<"auditLog">;
+  timestamp: number;
+  action: string;
+  resource: string;
+  status: string;
+  callerIdentity?: string;
+};
 
 export function SecurityAlertsPage() {
-  const events = useQuery(api.functions.auditLog.getSecurityEvents);
+  const events = useQuery(
+    api.functions.auditLog.getSecurityEvents
+  ) as SecurityEvent[] | undefined;
   const csvExport = useQuery(api.functions.auditLog.exportCsv, { limit: 1000 });
 
   const totalBlocked = useMemo(

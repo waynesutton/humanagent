@@ -305,7 +305,7 @@ export const createProfile = mutation({
 
     if (!existingColumns) {
       // Create default kanban columns
-      const defaultColumns = ["Inbox", "In Progress", "Done"];
+      const defaultColumns = ["Inbox", "Todo", "In Progress", "Done"];
       for (let i = 0; i < defaultColumns.length; i++) {
         await ctx.db.insert("boardColumns", {
           userId,
@@ -348,6 +348,16 @@ export const updateSettings = authedMutation({
       )
     ),
     llmModel: v.optional(v.string()),
+    tokenBudget: v.optional(v.number()),
+    rateLimitConfig: v.optional(
+      v.object({
+        apiRequestsPerMinute: v.number(),
+        mcpRequestsPerMinute: v.number(),
+        skillExecutionsPerMinute: v.number(),
+        emailsPerHour: v.number(),
+        a2aRequestsPerMinute: v.number(),
+      })
+    ),
     privacySettings: v.optional(
       v.object({
         showEmail: v.boolean(),
@@ -398,12 +408,17 @@ export const updateSettings = authedMutation({
           : undefined;
     }
 
-    if (args.llmProvider || args.llmModel) {
+    if (args.llmProvider || args.llmModel || args.tokenBudget !== undefined) {
       patch.llmConfig = {
         ...ctx.user.llmConfig,
         ...(args.llmProvider && { provider: args.llmProvider }),
         ...(args.llmModel && { model: args.llmModel }),
+        ...(args.tokenBudget !== undefined && { tokenBudget: args.tokenBudget }),
       };
+    }
+
+    if (args.rateLimitConfig !== undefined) {
+      patch.rateLimitConfig = args.rateLimitConfig;
     }
 
     if (args.privacySettings !== undefined) {

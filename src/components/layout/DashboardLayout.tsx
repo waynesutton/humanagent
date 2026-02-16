@@ -1,6 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "convex/react";
+import { UserCircle } from "@phosphor-icons/react";
 import { api } from "../../../convex/_generated/api";
 import { getAuth } from "../../lib/auth";
 
@@ -73,6 +74,24 @@ const navItems = [
           strokeLinecap="round"
           strokeLinejoin="round"
           d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"
+        />
+      </svg>
+    ),
+  },
+  {
+    label: "Chat",
+    href: "/chat",
+    icon: (
+      <svg
+        className="h-5 w-5"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth={1.5}>
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M7.5 8.25h9m-9 3h6m-8.25 8.25h12.75A2.25 2.25 0 0020.25 17.25V6.75A2.25 2.25 0 0018 4.5H6A2.25 2.25 0 003.75 6.75v10.5A2.25 2.25 0 006 19.5z"
         />
       </svg>
     ),
@@ -178,8 +197,9 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const auth = getAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  // Exclude admin-only items from header/mobile nav (Admin lives in profile dropdown)
   const visibleNavItems = navItems.filter(
-    (item) => !("adminOnly" in item && item.adminOnly) || isAdmin === true
+    (item) => !("adminOnly" in item && item.adminOnly)
   );
 
   useEffect(() => {
@@ -236,7 +256,8 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
                 onClick={() => setMenuOpen((prev) => !prev)}
                 className="btn-ghost text-sm"
               >
-                {viewer?.username ? `/${viewer.username}` : "Account"}
+                <UserCircle className="h-4 w-4" weight="regular" aria-hidden="true" />
+                {viewer?.username ? viewer.username : "Account"}
                 <svg
                   className={`h-4 w-4 transition-transform ${menuOpen ? "rotate-180" : ""}`}
                   fill="none"
@@ -250,6 +271,17 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
 
               {menuOpen ? (
                 <div className="absolute right-0 z-50 mt-2 w-56 rounded-lg border border-surface-3 bg-surface-0 p-1 shadow-card">
+                  {viewer?.username ? (
+                    <a
+                      href={`/${viewer.username}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-ink-1 hover:bg-surface-1 hover:text-ink-0"
+                    >
+                      <UserCircle className="h-4 w-4" weight="regular" aria-hidden="true" />
+                      Public profile
+                    </a>
+                  ) : null}
                   <Link
                     to="/settings"
                     className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-ink-1 hover:bg-surface-1 hover:text-ink-0"
@@ -263,16 +295,6 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
                     >
                       Admin
                     </Link>
-                  ) : null}
-                  {viewer?.username ? (
-                    <a
-                      href={`/${viewer.username}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-ink-1 hover:bg-surface-1 hover:text-ink-0"
-                    >
-                      Public profile
-                    </a>
                   ) : null}
                   <button
                     type="button"

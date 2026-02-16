@@ -1,24 +1,88 @@
+import { lazy, Suspense } from "react";
+import type { ComponentType } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
 import { Toaster } from "sileo";
 import { useAuth } from "./hooks/useAuth";
-import { LandingPage } from "./pages/LandingPage";
-import { LoginPage } from "./pages/LoginPage";
-import { OnboardingPage } from "./pages/OnboardingPage";
-import { DashboardPage } from "./pages/DashboardPage";
-import { SkillFilePage } from "./pages/SkillFilePage";
-import { ConversationsPage } from "./pages/ConversationsPage";
-import { BoardPage } from "./pages/BoardPage";
-import { FeedPage } from "./pages/FeedPage";
-import { SettingsPage } from "./pages/SettingsPage";
-import { AgentsPage } from "./pages/AgentsPage";
-import { InboxPage } from "./pages/InboxPage";
-import { A2AInboxPage } from "./pages/A2AInboxPage";
-import { AgentThinkingPage } from "./pages/AgentThinkingPage";
-import { AutomationPage } from "./pages/AutomationPage";
-import { AdminPage } from "./pages/AdminPage";
-import { PublicUserProfilePage } from "./pages/PublicUserProfilePage.tsx";
+
+const lazyNamed = <
+  TModule extends Record<string, unknown>,
+  TKey extends keyof TModule,
+>(
+  loader: () => Promise<TModule>,
+  exportName: TKey
+) =>
+  lazy(async () => {
+    const module = await loader();
+    return { default: module[exportName] as ComponentType };
+  });
+
+const LandingPage = lazyNamed(() => import("./pages/LandingPage"), "LandingPage");
+const LoginPage = lazyNamed(() => import("./pages/LoginPage"), "LoginPage");
+const OnboardingPage = lazyNamed(
+  () => import("./pages/OnboardingPage"),
+  "OnboardingPage"
+);
+const DashboardPage = lazyNamed(
+  () => import("./pages/DashboardPage"),
+  "DashboardPage"
+);
+const SkillFilePage = lazyNamed(() => import("./pages/SkillFilePage"), "SkillFilePage");
+const ConversationsPage = lazyNamed(
+  () => import("./pages/ConversationsPage"),
+  "ConversationsPage"
+);
+const BoardPage = lazyNamed(() => import("./pages/BoardPage"), "BoardPage");
+const FeedPage = lazyNamed(() => import("./pages/FeedPage"), "FeedPage");
+const SettingsPage = lazyNamed(() => import("./pages/SettingsPage"), "SettingsPage");
+const AgentsPage = lazyNamed(() => import("./pages/AgentsPage"), "AgentsPage");
+const InboxPage = lazyNamed(() => import("./pages/InboxPage"), "InboxPage");
+const AgentChatPage = lazyNamed(() => import("./pages/AgentChatPage"), "AgentChatPage");
+const A2AInboxPage = lazyNamed(() => import("./pages/A2AInboxPage"), "A2AInboxPage");
+const AgentThinkingPage = lazyNamed(
+  () => import("./pages/AgentThinkingPage"),
+  "AgentThinkingPage"
+);
+const AutomationPage = lazyNamed(
+  () => import("./pages/AutomationPage"),
+  "AutomationPage"
+);
+const AdminPage = lazyNamed(() => import("./pages/AdminPage"), "AdminPage");
+const PublicUserProfilePage = lazyNamed(
+  () => import("./pages/PublicUserProfilePage.tsx"),
+  "PublicUserProfilePage"
+);
+const PublicSitemapPage = lazy(async () =>
+  import("./pages/PublicDocsPage").then((module) => ({
+    default: module.PublicSitemapPage,
+  }))
+);
+const PublicLlmsTxtPage = lazy(async () =>
+  import("./pages/PublicDocsPage").then((module) => ({
+    default: module.PublicLlmsTxtPage,
+  }))
+);
+const PublicLlmsFullPage = lazy(async () =>
+  import("./pages/PublicDocsPage").then((module) => ({
+    default: module.PublicLlmsFullPage,
+  }))
+);
+const PublicApiDocsPage = lazy(async () =>
+  import("./pages/PublicDocsPage").then((module) => ({
+    default: module.PublicApiDocsPage,
+  }))
+);
+const PublicToolsDocsPage = lazy(async () =>
+  import("./pages/PublicDocsPage").then((module) => ({
+    default: module.PublicToolsDocsPage,
+  }))
+);
+const PublicOpenApiPage = lazy(async () =>
+  import("./pages/PublicDocsPage").then((module) => ({
+    default: module.PublicOpenApiPage,
+  }))
+);
 
 /**
  * Wrapper for protected routes.
@@ -79,6 +143,14 @@ function AdminRequired({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function RouteLoader() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-surface-0">
+      <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-3 border-t-accent" />
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <>
@@ -86,10 +158,11 @@ export default function App() {
         position="top-right"
         options={{ roundness: 1 }}
       />
-      <Routes>
-        {/* Public routes */}
-        <Route path="/" element={<LandingPage />} />
-        <Route path="/login" element={<LoginPage />} />
+      <Suspense fallback={<RouteLoader />}>
+        <Routes>
+          {/* Public routes */}
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/login" element={<LoginPage />} />
 
         {/* Onboarding (needs auth but not full profile) */}
         <Route path="/onboarding" element={<OnboardingPage />} />
@@ -168,6 +241,15 @@ export default function App() {
         />
 
         <Route
+          path="/chat"
+          element={
+            <AuthRequired>
+              <AgentChatPage />
+            </AuthRequired>
+          }
+        />
+
+        <Route
           path="/a2a"
           element={
             <AuthRequired>
@@ -223,15 +305,24 @@ export default function App() {
           }
         />
 
-        {/* Public agent page */}
-        <Route path="/u/:username" element={<PublicUserProfilePage />} />
-        <Route path="/u/:username/:slug" element={<PublicUserProfilePage />} />
-        <Route path="/:username" element={<PublicUserProfilePage />} />
-        <Route path="/:username/:slug" element={<PublicUserProfilePage />} />
+        {/* Public profile docs and discovery routes */}
+        <Route path="/:username/sitemap.md" element={<PublicSitemapPage />} />
+        <Route path="/:username/llms.txt" element={<PublicLlmsTxtPage />} />
+        <Route path="/:username/llms-full.md" element={<PublicLlmsFullPage />} />
+        <Route path="/api/v1/agents/:username/docs.md" element={<PublicApiDocsPage />} />
+        <Route path="/api/v1/agents/:username/tools.md" element={<PublicToolsDocsPage />} />
+          <Route path="/api/v1/agents/:username/openapi.json" element={<PublicOpenApiPage />} />
 
-        {/* Catch-all */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+          {/* Public agent page */}
+          <Route path="/u/:username" element={<PublicUserProfilePage />} />
+          <Route path="/u/:username/:slug" element={<PublicUserProfilePage />} />
+          <Route path="/:username" element={<PublicUserProfilePage />} />
+          <Route path="/:username/:slug" element={<PublicUserProfilePage />} />
+
+          {/* Catch-all */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
     </>
   );
 }

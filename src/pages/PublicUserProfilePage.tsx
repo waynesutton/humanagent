@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, Navigate, useLocation, useParams } from "react-router-dom";
-import { useQuery } from "convex/react";
+import { Link, Navigate, useParams } from "react-router-dom";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { FeedTimelineItem, type FeedTimelineItemData } from "../components/feed/FeedTimelineItem";
 import { GithubLogo, LinkedinLogo, XLogo } from "@phosphor-icons/react";
+import type { Id } from "../../convex/_generated/dataModel";
+import { notify } from "../lib/notify";
 
 interface PrivacySettings {
   profileVisible: boolean;
@@ -31,7 +33,7 @@ interface PublicUser {
 }
 
 interface PublicAgentSummary {
-  _id: string;
+  _id: Id<"agents">;
   name: string;
   slug: string;
   description?: string;
@@ -44,6 +46,16 @@ interface PublicAgentSummary {
     showEmail?: boolean;
     showSkillFile?: boolean;
   };
+}
+
+interface ViewerUser {
+  _id: Id<"users">;
+}
+
+interface ViewerAgent {
+  _id: Id<"agents">;
+  name: string;
+  isDefault: boolean;
 }
 
 interface PublicSkill {
@@ -83,7 +95,6 @@ const DEFAULT_PRIVACY: PrivacySettings = {
 
 export function PublicUserProfilePage() {
   const { username, slug } = useParams<{ username: string; slug?: string }>();
-  const location = useLocation();
   const normalizedUsername = username?.startsWith("@") ? username.slice(1) : username;
   const hasAtPrefix = Boolean(username && normalizedUsername && username !== normalizedUsername);
   const isUPath = location.pathname.startsWith("/u/");
@@ -131,7 +142,17 @@ export function PublicUserProfilePage() {
     normalizedUsername ? { username: normalizedUsername } : "skip"
   ) as PublicSocial[] | undefined;
 
-  const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
+  const [activeAgentId, setActiveAgentId] = useState<Id<"agents"> | null>(null);
+  const [requestDescription, setRequestDescription] = useState("");
+  const [requestAgentId, setRequestAgentId] = useState<Id<"agents"> | null>(null);
+  const [targetAgentId, setTargetAgentId] = useState<Id<"agents"> | null>(null);
+  const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
+  const viewer = useQuery(api.functions.users.viewer, {}) as ViewerUser | null | undefined;
+  const requesterAgents = useQuery(
+    api.functions.agents.list,
+    viewer ? {} : "skip"
+  ) as ViewerAgent[] | undefined;
+  const requestPublicAgentTask = useMutation(api.functions.board.requestPublicAgentTask);
   const selectedAgent =
     selectedAgentBySlug ??
     (selectedAgentSlug ? publicAgents?.find((agent) => agent.slug === selectedAgentSlug) : undefined) ??
@@ -142,6 +163,8 @@ export function PublicUserProfilePage() {
 
   const privacy = user?.privacySettings ?? DEFAULT_PRIVACY;
   const profileHidden = user?.profileHidden ?? false;
+  const hasRequesterProfile = viewer !== null && viewer !== undefined;
+  const hasRequesterAgent = Boolean(requesterAgents && requesterAgents.length > 0);
 
   const selectedMcpPath =
     normalizedUsername && selectedAgent?.slug
@@ -194,6 +217,48 @@ export function PublicUserProfilePage() {
       label: string;
     }>;
   }, [socialProfiles, user?.socialProfiles]);
+
+  useEffect(() => {
+    if (!requesterAgents || requesterAgents.length === 0) {
+      setRequestAgentId(null);
+      return;
+    }
+    setRequestAgentId((prev) => {
+      if (prev && requesterAgents.some((agent) => agent._id === prev)) return prev;
+      return requesterAgents.find((agent) => agent.isDefault)?._id ?? requesterAgents[0]!._id;
+    });
+  }, [requesterAgents]);
+
+  useEffect(() => {
+    if (!publicAgents || publicAgents.length === 0) {
+      setTargetAgentId(null);
+      return;
+    }
+    setTargetAgentId((prev) => {
+      if (prev && publicAgents.some((agent) => agent._id === prev)) return prev;
+      if (selectedAgent?._id) return selectedAgent._id;
+      return publicAgents[0]!._id;
+    });
+  }, [publicAgents, selectedAgent?._id]);
+
+  async function handleRequestTask() {
+    if (!normalizedUsername || !targetAgentId || !requestAgentId || !requestDescription.trim()) return;
+    try {
+      setIsSubmittingRequest(true);
+      await requestPublicAgentTask({
+        targetUsername: normalizedUsername,
+        targetAgentId,
+        requesterAgentId: requestAgentId,
+        description: requestDescription.trim(),
+      });
+      setRequestDescription("");
+      notify.success("Task request sent", "Added to this agent's Inbox board.");
+    } catch (error) {
+      notify.error("Could not send task request", error);
+    } finally {
+      setIsSubmittingRequest(false);
+    }
+  }
 
   // Register WebMCP tools for Chrome 146+ (navigator.modelContext)
   useEffect(() => {
@@ -301,9 +366,16 @@ export function PublicUserProfilePage() {
     return <PublicState title="Profile is private" description={`/${normalizedUsername} is not publicly visible.`} />;
   }
 
-  if (normalizedUsername && !slug && defaultAgent && location.pathname === profileBasePath) {
-    return <Navigate to={`${profileBasePath}/${defaultAgent.slug}`} replace />;
-  }
+  const requestTargetAgent =
+    (targetAgentId ? publicAgents?.find((agent) => agent._id === targetAgentId) : undefined) ?? selectedAgent;
+  const canRequestTask =
+    Boolean(normalizedUsername) &&
+    hasRequesterProfile &&
+    hasRequesterAgent &&
+    Boolean(requestTargetAgent) &&
+    Boolean(requestAgentId) &&
+    requestDescription.trim().length > 0 &&
+    !isSubmittingRequest;
 
   return (
     <div className="min-h-screen bg-surface-0">
@@ -321,41 +393,153 @@ export function PublicUserProfilePage() {
         </div>
       </nav>
 
-      <main className="mx-auto flex max-w-5xl flex-col gap-8 px-4 py-8 sm:px-6 sm:py-10">
-        <section className="border border-surface-3 bg-surface-0 p-4 sm:p-6">
-          <div className="flex flex-col gap-5 sm:flex-row sm:items-start">
-            <Avatar image={selectedAgent?.image ?? user.image} name={selectedAgent?.name ?? user.name ?? normalizedUsername ?? "U"} />
-            <div className="min-w-0 flex-1">
-              <h1 className="text-2xl font-semibold text-ink-0">
-                {selectedAgent?.name || skill?.identity?.name || user.name || normalizedUsername}
-              </h1>
-              <p className="mt-1 text-sm text-ink-2">@{normalizedUsername}</p>
-              <p className="mt-3 max-w-2xl text-sm leading-relaxed text-ink-1">
-                {selectedAgent?.description || skill?.identity?.bio || user.bio || "Public AI profile"}
-              </p>
-              <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
-                {skill?.communicationPrefs?.availability && (
-                  <span className="border border-surface-3 px-2 py-1 text-ink-1">{skill.communicationPrefs.availability}</span>
-                )}
-                {skill?.communicationPrefs?.timezone && (
-                  <span className="border border-surface-3 px-2 py-1 text-ink-1">{skill.communicationPrefs.timezone}</span>
+      <main className="mx-auto flex max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 sm:py-10">
+        <section className="grid gap-4 lg:grid-cols-12">
+          <div className="border border-surface-3 bg-surface-0 p-4 sm:p-6 lg:col-span-4">
+            <div className="flex flex-col gap-5 sm:flex-row sm:items-start lg:flex-col">
+              <Avatar image={selectedAgent?.image ?? user.image} name={selectedAgent?.name ?? user.name ?? normalizedUsername ?? "U"} />
+              <div className="min-w-0 flex-1">
+                <h1 className="text-balance text-2xl font-semibold text-ink-0">
+                  {selectedAgent?.name || skill?.identity?.name || user.name || normalizedUsername}
+                </h1>
+                <p className="mt-1 text-sm text-ink-2">@{normalizedUsername}</p>
+                <p className="mt-3 text-pretty text-sm leading-relaxed text-ink-1">
+                  {selectedAgent?.description || skill?.identity?.bio || user.bio || "Public AI profile"}
+                </p>
+                <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
+                  {skill?.communicationPrefs?.availability && (
+                    <span className="border border-surface-3 px-2 py-1 text-ink-1">{skill.communicationPrefs.availability}</span>
+                  )}
+                  {skill?.communicationPrefs?.timezone && (
+                    <span className="border border-surface-3 px-2 py-1 text-ink-1">{skill.communicationPrefs.timezone}</span>
+                  )}
+                </div>
+                {socialLinks.length > 0 && (
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    {socialLinks.map((link) => (
+                      <a
+                        key={link.service}
+                        href={link.href}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex size-9 items-center justify-center border border-surface-3 text-ink-1 hover:bg-surface-1 hover:text-ink-0"
+                        aria-label={`${link.service} profile`}
+                        title={link.label}
+                      >
+                        <SocialIcon service={link.service} />
+                      </a>
+                    ))}
+                  </div>
                 )}
               </div>
-              {socialLinks.length > 0 && (
-                <div className="mt-4 flex flex-wrap items-center gap-2">
-                  {socialLinks.map((link) => (
+            </div>
+          </div>
+
+          <div className="border border-surface-3 bg-surface-0 p-4 sm:p-6 lg:col-span-8">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-sm font-medium uppercase tracking-wide text-ink-2">Public connect options</h2>
+              {requestTargetAgent && (
+                <span className="border border-surface-3 px-2 py-1 text-xs text-ink-1">Target: {requestTargetAgent.name}</span>
+              )}
+            </div>
+
+            {privacy.showEndpoints && normalizedUsername && requestTargetAgent ? (
+              <div className="mt-3 space-y-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {buildConnectCards(normalizedUsername, requestTargetAgent, privacy).map((card) => (
                     <a
-                      key={link.service}
-                      href={link.href}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex h-9 w-9 items-center justify-center border border-surface-3 text-ink-1 hover:bg-surface-1 hover:text-ink-0"
-                      aria-label={`${link.service} profile`}
-                      title={link.label}
+                      key={card.label}
+                      href={card.href}
+                      target={card.external ? "_blank" : undefined}
+                      rel={card.external ? "noreferrer" : undefined}
+                      className="flex items-center justify-between gap-3 border border-surface-3 bg-surface-0 px-3 py-3 text-sm hover:bg-surface-1"
                     >
-                      <SocialIcon service={link.service} />
+                      <span className="text-ink-1">{card.label}</span>
+                      <span className="truncate font-mono text-xs text-ink-2">{card.value}</span>
                     </a>
                   ))}
+                </div>
+                <p className="text-xs text-ink-2">
+                  API and MCP routes require an API key with the right scope. Docs and sitemap routes are public.
+                </p>
+              </div>
+            ) : (
+              <div className="mt-3 border border-surface-3 bg-surface-1 p-4 text-sm text-ink-2">
+                Public endpoint sharing is disabled for this profile.
+              </div>
+            )}
+
+            <div className="mt-4 border border-surface-3 bg-surface-1 p-4">
+              <h3 className="text-sm font-medium text-ink-0">Request this agent to do a task</h3>
+              <p className="mt-1 text-sm text-ink-2">
+                Sends the task into the target agent board Inbox. You must have a profile and at least one agent.
+              </p>
+
+              {viewer === undefined ? (
+                <div className="mt-3 border border-surface-3 bg-surface-0 p-3 text-sm text-ink-2">
+                  Checking your account...
+                </div>
+              ) : !hasRequesterProfile ? (
+                <div className="mt-3 border border-surface-3 bg-surface-0 p-3 text-sm text-ink-2">
+                  Sign in with your profile to request a task.
+                </div>
+              ) : !hasRequesterAgent ? (
+                <div className="mt-3 border border-surface-3 bg-surface-0 p-3 text-sm text-ink-2">
+                  Create at least one agent before sending requests.
+                </div>
+              ) : (
+                <div className="mt-3 space-y-3">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="text-xs text-ink-2">
+                      <span className="mb-1 block">Your agent</span>
+                      <select
+                        value={requestAgentId ?? ""}
+                        onChange={(event) => setRequestAgentId(event.target.value as Id<"agents">)}
+                        className="w-full border border-surface-3 bg-surface-0 px-3 py-2 text-sm text-ink-1"
+                      >
+                        {requesterAgents?.map((agent) => (
+                          <option key={agent._id} value={agent._id}>
+                            {agent.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-xs text-ink-2">
+                      <span className="mb-1 block">Target public agent</span>
+                      <select
+                        value={targetAgentId ?? ""}
+                        onChange={(event) => setTargetAgentId(event.target.value as Id<"agents">)}
+                        className="w-full border border-surface-3 bg-surface-0 px-3 py-2 text-sm text-ink-1"
+                      >
+                        {publicAgents?.map((agent) => (
+                          <option key={agent._id} value={agent._id}>
+                            {agent.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <label className="text-xs text-ink-2">
+                    <span className="mb-1 block">Task description</span>
+                    <textarea
+                      value={requestDescription}
+                      onChange={(event) => setRequestDescription(event.target.value)}
+                      className="min-h-24 w-full resize-y border border-surface-3 bg-surface-0 px-3 py-2 text-sm text-ink-1"
+                      placeholder="Describe what you want this agent to do"
+                      maxLength={800}
+                    />
+                  </label>
+                  <div className="flex items-center justify-between gap-2 text-xs text-ink-2">
+                    <span>{requestDescription.trim().length}/800</span>
+                    <button
+                      type="button"
+                      onClick={() => void handleRequestTask()}
+                      disabled={!canRequestTask}
+                      className="border border-surface-3 px-3 py-1.5 text-sm text-ink-1 hover:bg-surface-0 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isSubmittingRequest ? "Sending..." : "Request task"}
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -367,7 +551,7 @@ export function PublicUserProfilePage() {
           {!publicAgents || publicAgents.length === 0 ? (
             <div className="mt-3 border border-surface-3 bg-surface-1 p-4 text-sm text-ink-2">No public agents yet.</div>
           ) : (
-            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {publicAgents.map((agent) => (
                 <button
                   key={agent._id}
@@ -421,26 +605,6 @@ export function PublicUserProfilePage() {
             </div>
           </section>
         )}
-
-        {privacy.showEndpoints && normalizedUsername && selectedAgent && (
-          <section>
-            <h2 className="text-sm font-medium uppercase tracking-wide text-ink-2">Public connect options</h2>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              {buildConnectCards(normalizedUsername, selectedAgent, privacy).map((card) => (
-                <a
-                  key={card.label}
-                  href={card.href}
-                  target={card.external ? "_blank" : undefined}
-                  rel={card.external ? "noreferrer" : undefined}
-                  className="flex items-center justify-between gap-3 border border-surface-3 bg-surface-0 px-3 py-3 text-sm hover:bg-surface-1"
-                >
-                  <span className="text-ink-1">{card.label}</span>
-                  <span className="truncate font-mono text-xs text-ink-2">{card.value}</span>
-                </a>
-              ))}
-            </div>
-          </section>
-        )}
       </main>
 
       <footer className="border-t border-surface-3 py-8">
@@ -478,6 +642,9 @@ export function PublicUserProfilePage() {
                 </a>
               ))}
             </div>
+            <p className="mt-3 text-xs text-ink-2">
+              API and MCP routes require an API key with the right scope. Docs and sitemap routes are public.
+            </p>
             {publicAgentPath && (
               <div className="mt-4 flex flex-wrap gap-2">
                 <button
