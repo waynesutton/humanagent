@@ -26,10 +26,10 @@ Backend functions, schema, auth, HTTP routes, and cron jobs.
 
 | File | Description |
 |---|---|
-| `schema.ts` | Database schema with 20+ tables. Includes profile visibility/social fields, feed archival fields, webhook retry queue state, task collaboration tables (`taskComments`, `taskAttachments`), and conversation to agent linking (`conversations.agentId`) for 1:1 dashboard chat |
+| `schema.ts` | Database schema with 20+ tables. Includes profile visibility/social fields, feed archival fields, webhook retry queue state, task collaboration tables (`taskComments`, `taskAttachments`), board project grouping (`boardProjects` + `tasks.projectId`), and conversation to agent linking (`conversations.agentId`) for 1:1 dashboard chat |
 | `auth.ts` | Auth setup with @robelest/convex-auth and GitHub OAuth provider |
 | `auth.config.ts` | Auth configuration settings |
-| `http.ts` | HTTP router: auth routes, fail-closed REST/MCP API auth with ownership binding (`apiKey.userId === target user`), route-group + scope checks (`api:call`, `mcp:call`), health check endpoint (`/health`), stable API error envelopes, content negotiation headers, MCP endpoints, Twilio SMS/Voice webhooks, AgentMail webhook, skill endpoints, llms endpoints, and discovery docs routes (`sitemap.md`, `docs.md`, `tools.md`, `openapi.json`) |
+| `http.ts` | HTTP router: auth routes, fail-closed REST/MCP API auth with ownership binding (`apiKey.userId === target user`), route-group + scope checks (`api:call`, `mcp:call`), health check endpoint (`/health`), stable API error envelopes, content negotiation headers, MCP endpoints, Twilio SMS/Voice webhooks, AgentMail webhook, skill endpoints, llms endpoints (profile and per-agent paths), and discovery docs routes (`sitemap.md`, `docs.md`, `tools.md`, `openapi.json`) |
 | `crons.ts` | Cron jobs: agent heartbeat (5min), monthly token reset, memory compression (24h), rate limit cleanup (1h), permissions cleanup (6h), webhook retry processor (2min), and scheduled agent runs |
 | `convex.config.ts` | Convex app config registering auth and crons components |
 | `tsconfig.json` | TypeScript config scoped to Convex backend |
@@ -67,7 +67,7 @@ CRUD functions and business logic for each domain.
 | `credentials.ts` | Encrypted credential storage (BYOK): save, get, delete for LLM providers (including DeepSeek) and integrations |
 | `conversations.ts` | Conversation list and management for inbox channels plus 1:1 dashboard agent chat (`listAgentChats`, `startAgentChat`, `sendDashboardMessage`) with scheduled AI replies |
 | `feed.ts` | Public feed queries (`getPublicFeed`, `getGlobalPublicFeed`, `getArchivedFeed`), feed item CRUD (create, update, hide/unhide, archive/unarchive, delete), and expired item cleanup |
-| `board.ts` | Kanban board columns and task management, includes default column backfill (`Inbox`, `Todo`, `In Progress`, `Done`) and chat to task creation (`createTaskFromChat`) plus comments and attachments APIs |
+| `board.ts` | Kanban board columns and task management, includes default column backfill (`Inbox`, `Todo`, `In Progress`, `Done`), board project CRUD (`getProjects`, `createProject`, `updateProject`, `deleteProject`), project-linked task create/update, chat to task creation (`createTaskFromChat`), plus comments and attachments APIs |
 | `apiKeys.ts` | API key create/revoke/rotate with SHA-256 hashed token validation, key type (`user_universal` or `agent_scoped`), optional `allowedAgentIds`, and optional `allowedRouteGroups` constraints |
 | `auditLog.ts` | Append-only audit log creation, security event queries, and CSV export |
 | `connectedApps.ts` | OAuth app management: connect/disconnect, token storage, refresh handling |
@@ -78,7 +78,7 @@ CRUD functions and business logic for each domain.
 | `userSchedules.ts` | Dynamic cron jobs per user: daily digest, calendar sync, custom schedules |
 | `agentThinking.ts` | Agent reasoning/thinking capabilities: observations, decisions, reflections, goal updates |
 | `a2a.ts` | Agent-to-agent messaging: inbox/outbox threads, message sending, auto-response processing, and thread summaries |
-| `llmsTxt.ts` | LLMs.txt file generation for AI discoverability following llms.txt spec, privacy-safe filtering via publicConnect/privacySettings |
+| `llmsTxt.ts` | LLMs.txt generation for AI discoverability with both profile-level aggregate files and per-agent files (`/:username/:slug/llms.*`), privacy-safe filtering via publicConnect/privacySettings, and scoped regeneration/indexing |
 | `agentDocs.ts` | Shared contract builder for discovery docs and query helpers for rendered sitemap/docs/tools/openapi content, including API/MCP scope notes and public-vs-auth endpoint guidance |
 | `xTwitter.ts` | X/Twitter Grok actions for trend analysis, sentiment, monitoring, account analysis, and internal Grok query helper |
 | `security.ts` | Security functions: flag creation, query by user |
@@ -103,7 +103,7 @@ React frontend with Vite.
 | File | Description |
 |---|---|
 | `main.tsx` | React entry with Convex provider and router; mounts `App`, app styles, initializes auth, and applies persisted light/dark theme |
-| `App.tsx` | React Router routes with AuthRequired wrapper, admin-only route guard for `/admin`, dedicated `/chat` route for 1:1 agent chat, explicit discovery doc routes (sitemap/llms/docs/tools/openapi), profile routes, and global Sileo toaster mount |
+| `App.tsx` | React Router routes with AuthRequired wrapper, admin-only route guard for `/admin`, dedicated `/chat` route for 1:1 agent chat, explicit discovery doc routes (including profile + per-agent llms), profile routes, and global Sileo toaster mount |
 | `index.css` | Base styles with Tailwind utilities, Sileo data-attribute theme overrides, and dark-mode surface/ink utility overrides |
 | `vite-env.d.ts` | Vite environment type declarations |
 
@@ -111,15 +111,15 @@ React frontend with Vite.
 
 | File | Description |
 |---|---|
-| `LandingPage.tsx` | Marketing landing page with hero, features, real-time public activity stream (recent 10 items in an auto-scrolling feed box), how it works, and CTA |
+| `LandingPage.tsx` | Marketing landing page with hero, features, profile + per-agent llms discovery references, explicit default-agent routing note for base username API/MCP paths, real-time public activity stream (recent 10 items in an auto-scrolling feed box), how it works, and CTA |
 | `LoginPage.tsx` | OAuth login page (GitHub, Google) with redirect logic |
 | `OnboardingPage.tsx` | New user setup: username, name, bio, creates skill file and board with toast feedback on profile creation |
-| `DashboardPage.tsx` | Main dashboard: status cards, quick actions, recent activity, endpoints |
+| `DashboardPage.tsx` | Main dashboard: status cards, quick actions, recent activity, and canonical endpoint cards including profile llms aggregate links |
 | `SkillFilePage.tsx` | Edit agent capabilities, knowledge domains, communication prefs, tool declarations, and import workflows with toast feedback |
 | `ConversationsPage.tsx` | List and view agent conversations with message detail |
-| `BoardPage.tsx` | Kanban task board with drag and drop, task creation, assignment, archive/restore, task details modal for comments + attachments, and automatic default-column backfill for existing users |
+| `BoardPage.tsx` | Task board with dual views (Board + Projects), drag and drop columns, project creation/grouping, task create/edit with project assignment, agent/project filters with active scope labels, archive/restore, task details modal for comments + attachments, and automatic default-column backfill for existing users |
 | `FeedPage.tsx` | Activity feed with post creation, action menu (edit, hide, archive, delete), edit modal, delete confirmation, and toast feedback |
-| `SettingsPage.tsx` | Profile/privacy/BYOK/API key settings with theme controls, admin state badge, agent status section, built-in Security tabs, and advanced API key constraints (key type, route groups, optional per-agent restrictions) |
+| `SettingsPage.tsx` | Profile/privacy/BYOK/API key settings with theme controls, admin state badge, agent status section, default-agent selector (shared with agents set-default flow), built-in Security tabs, and advanced API key constraints (key type, route groups, optional per-agent restrictions) |
 | `RateLimitsPage.tsx` | Rate-limit monitoring dashboard with active windows, request totals, and top rate-limit keys |
 | `AgentsPage.tsx` | Multi-agent management: create, edit, delete agents with LLM config, phone settings, voice config, X/Twitter integration, scheduling, and toast-based confirmations |
 | `InboxPage.tsx` | Inbox for email/phone/API conversations with reply and status management (dashboard 1:1 agent chats excluded to keep inbox channel focused) |
@@ -129,8 +129,8 @@ React frontend with Vite.
 | `AutomationPage.tsx` | Dashboard automation hub with A2A and Thinking tabs in one place |
 | `AdminPage.tsx` | Admin dashboard for platform metrics and user management list |
 | `SecurityAlertsPage.tsx` | Security alerts dashboard showing blocked events with CSV audit export |
-| `PublicUserProfilePage.tsx` | Public profile at `/u/:username` with agent selection, privacy-aware sections, social links, stable base profile routing, and public connect cards with API/MCP auth guidance |
-| `PublicDocsPage.tsx` | Public discovery/doc route renderer for `/:username/sitemap.md`, `/:username/llms.txt`, `/:username/llms-full.md`, and `/api/v1/agents/:username/*` docs paths in SPA mode |
+| `PublicUserProfilePage.tsx` | Public profile at `/u/:username` with agent selection, privacy-aware sections, social links, stable base profile routing, and public connect cards with standardized llms labels (`Profile llms (aggregate)` and `Agent llms (persona)`) plus API/MCP auth guidance |
+| `PublicDocsPage.tsx` | Public discovery/doc route renderer for sitemap/docs paths and both profile + per-agent llms routes with standardized aggregate/persona titles in SPA mode |
 | `PublicAgentPage.tsx` | Public agent profile page with privacy-aware endpoint cards, llms links, and discovery docs links (API Docs, Tools Docs, OpenAPI, Sitemap) |
 
 ### src/components/
@@ -152,7 +152,7 @@ React frontend with Vite.
 |---|---|
 | `auth.ts` | Singleton instance of auth client |
 | `notify.ts` | Shared Sileo toast helper for success, error, promise, and action confirmations |
-| `platformApi.ts` | Central typed API contract for frontend pages: Convex function refs, service catalogs, and public HTTP route builders |
+| `platformApi.ts` | Central typed API contract for frontend pages: Convex function refs (including board project APIs), service catalogs, and public HTTP route builders |
 | `theme.ts` | Theme utilities for initializing and persisting light/dark dashboard mode |
 
 ## types/

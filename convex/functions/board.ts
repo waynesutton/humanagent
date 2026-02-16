@@ -136,6 +136,117 @@ export const ensureDefaultColumns = authedMutation({
 });
 
 // ============================================================
+// Projects
+// ============================================================
+
+export const getProjects = authedQuery({
+  args: {},
+  returns: v.array(v.any()),
+  handler: async (ctx) => {
+    const projects = await ctx.db
+      .query("boardProjects")
+      .withIndex("by_userId", (q) => q.eq("userId", ctx.userId))
+      .order("desc")
+      .take(200);
+    return projects;
+  },
+});
+
+export const createProject = authedMutation({
+  args: {
+    name: v.string(),
+    description: v.optional(v.string()),
+    color: v.optional(v.string()),
+  },
+  returns: v.id("boardProjects"),
+  handler: async (ctx, args) => {
+    const name = args.name.trim();
+    if (!name) {
+      throw new Error("Project name is required");
+    }
+    if (name.length > 80) {
+      throw new Error("Project name must be 80 characters or less");
+    }
+
+    const existing = await ctx.db
+      .query("boardProjects")
+      .withIndex("by_userId_name", (q) => q.eq("userId", ctx.userId).eq("name", name))
+      .unique();
+    if (existing) {
+      return existing._id;
+    }
+
+    const now = Date.now();
+    return await ctx.db.insert("boardProjects", {
+      userId: ctx.userId,
+      name,
+      description: args.description?.trim() || undefined,
+      color: args.color,
+      createdAt: now,
+      updatedAt: now,
+    });
+  },
+});
+
+export const updateProject = authedMutation({
+  args: {
+    projectId: v.id("boardProjects"),
+    name: v.optional(v.string()),
+    description: v.optional(v.union(v.string(), v.null())),
+    color: v.optional(v.union(v.string(), v.null())),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const project = await ctx.db.get(args.projectId);
+    if (!project || project.userId !== ctx.userId) {
+      throw new Error("Project not found");
+    }
+
+    const patch: Record<string, unknown> = { updatedAt: Date.now() };
+    if (args.name !== undefined) {
+      const name = args.name.trim();
+      if (!name) {
+        throw new Error("Project name is required");
+      }
+      if (name.length > 80) {
+        throw new Error("Project name must be 80 characters or less");
+      }
+      patch.name = name;
+    }
+    if (args.description !== undefined) {
+      patch.description = args.description?.trim() || undefined;
+    }
+    if (args.color !== undefined) {
+      patch.color = args.color || undefined;
+    }
+
+    await ctx.db.patch(args.projectId, patch);
+    return null;
+  },
+});
+
+export const deleteProject = authedMutation({
+  args: { projectId: v.id("boardProjects") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const project = await ctx.db.get(args.projectId);
+    if (!project || project.userId !== ctx.userId) {
+      throw new Error("Project not found");
+    }
+
+    const linkedTasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_userId_projectId", (q) =>
+        q.eq("userId", ctx.userId).eq("projectId", args.projectId)
+      )
+      .take(500);
+    await Promise.all(linkedTasks.map((task) => ctx.db.patch(task._id, { projectId: undefined })));
+    await ctx.db.delete(args.projectId);
+    return null;
+  },
+});
+
+// ============================================================
 // Tasks
 // ============================================================
 
@@ -185,6 +296,7 @@ export const createTask = authedMutation({
     description: v.string(),
     boardColumnId: v.optional(v.id("boardColumns")),
     agentId: v.optional(v.id("agents")),
+    projectId: v.optional(v.id("boardProjects")),
   },
   returns: v.id("tasks"),
   handler: async (ctx, args) => {
@@ -196,9 +308,17 @@ export const createTask = authedMutation({
       }
     }
 
+    if (args.projectId) {
+      const project = await ctx.db.get(args.projectId);
+      if (!project || project.userId !== ctx.userId) {
+        throw new Error("Project not found");
+      }
+    }
+
     return await ctx.db.insert("tasks", {
       userId: ctx.userId,
       agentId: args.agentId,
+      projectId: args.projectId,
       requestedBy: "user",
       description: args.description,
       status: "pending",
@@ -441,6 +561,7 @@ export const updateTask = authedMutation({
     taskId: v.id("tasks"),
     description: v.optional(v.string()),
     agentId: v.optional(v.union(v.id("agents"), v.null())),
+    projectId: v.optional(v.union(v.id("boardProjects"), v.null())),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -455,9 +576,17 @@ export const updateTask = authedMutation({
       }
     }
 
+    if (args.projectId) {
+      const project = await ctx.db.get(args.projectId);
+      if (!project || project.userId !== ctx.userId) {
+        throw new Error("Project not found");
+      }
+    }
+
     const patch: Record<string, unknown> = {};
     if (args.description !== undefined) patch.description = args.description;
     if (args.agentId !== undefined) patch.agentId = args.agentId;
+    if (args.projectId !== undefined) patch.projectId = args.projectId;
 
     if (Object.keys(patch).length > 0) {
       await ctx.db.patch(args.taskId, patch);

@@ -153,8 +153,12 @@ export const platformApi = {
     },
     board: {
       getColumns: api.functions.board.getColumns,
+      getProjects: api.functions.board.getProjects,
       getTasks: api.functions.board.getTasks,
       getArchivedTasks: api.functions.board.getArchivedTasks,
+      createProject: api.functions.board.createProject,
+      updateProject: api.functions.board.updateProject,
+      deleteProject: api.functions.board.deleteProject,
       createTask: api.functions.board.createTask,
       createTaskFromChat: api.functions.board.createTaskFromChat,
       moveTask: api.functions.board.moveTask,
@@ -233,6 +237,10 @@ export const platformApi = {
       sitemapMd: (username: string) => `/${username}/sitemap.md`,
       llmsTxt: (username: string) => `/${username}/llms.txt`,
       llmsFullMd: (username: string) => `/${username}/llms-full.md`,
+      llmsTxtByAgent: (username: string, slug: string) =>
+        `/${username}/${slug}/llms.txt`,
+      llmsFullMdByAgent: (username: string, slug: string) =>
+        `/${username}/${slug}/llms-full.md`,
       mcpByUsername: (username: string) => `/mcp/u/${username}`,
       mcpBySlug: (username: string, slug: string) => `/mcp/u/${username}/${slug}`,
     },

@@ -309,6 +309,8 @@ export default function App() {
         <Route path="/:username/sitemap.md" element={<PublicSitemapPage />} />
         <Route path="/:username/llms.txt" element={<PublicLlmsTxtPage />} />
         <Route path="/:username/llms-full.md" element={<PublicLlmsFullPage />} />
+        <Route path="/:username/:slug/llms.txt" element={<PublicLlmsTxtPage />} />
+        <Route path="/:username/:slug/llms-full.md" element={<PublicLlmsFullPage />} />
         <Route path="/api/v1/agents/:username/docs.md" element={<PublicApiDocsPage />} />
         <Route path="/api/v1/agents/:username/tools.md" element={<PublicToolsDocsPage />} />
           <Route path="/api/v1/agents/:username/openapi.json" element={<PublicOpenApiPage />} />

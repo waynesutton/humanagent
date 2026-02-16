@@ -202,6 +202,16 @@ export function DashboardPage() {
               value={`humanai.gent/mcp/u/${viewer.username}`}
               copyValue={`https://humanai.gent/mcp/u/${viewer.username}`}
             />
+            <EndpointCard
+              title="Profile llms (aggregate)"
+              value={`humanai.gent/${viewer.username}/llms.txt`}
+              copyValue={`https://humanai.gent/${viewer.username}/llms.txt`}
+            />
+            <EndpointCard
+              title="Profile llms full (aggregate)"
+              value={`humanai.gent/${viewer.username}/llms-full.md`}
+              copyValue={`https://humanai.gent/${viewer.username}/llms-full.md`}
+            />
           </div>
         </div>
       </div>

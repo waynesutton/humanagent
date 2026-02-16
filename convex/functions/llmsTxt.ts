@@ -1,66 +1,20 @@
 import { v } from "convex/values";
-import { query, internalMutation, internalQuery } from "../_generated/server";
+import {
+  query,
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+} from "../_generated/server";
 import { authedMutation } from "../lib/functions";
 import { internal } from "../_generated/api";
+import type { Doc, Id } from "../_generated/dataModel";
 
-// ============================================================
-// Public Queries - Serve llms.txt content
-// ============================================================
-
-// Get llms.txt content for a user by username
-export const getByUsername = query({
-  args: { username: v.string() },
-  returns: v.union(
-    v.object({
-      txtContent: v.string(),
-      mdContent: v.string(),
-      generatedAt: v.number(),
-    }),
-    v.null()
-  ),
-  handler: async (ctx, { username }) => {
-    const record = await ctx.db
-      .query("llmsTxt")
-      .withIndex("by_username", (q) => q.eq("username", username))
-      .unique();
-
-    if (!record) return null;
-
-    return {
-      txtContent: record.txtContent,
-      mdContent: record.mdContent,
-      generatedAt: record.generatedAt,
-    };
-  },
+const llmsResponseValidator = v.object({
+  txtContent: v.string(),
+  mdContent: v.string(),
+  generatedAt: v.number(),
 });
 
-// ============================================================
-// Internal Functions - Generate llms.txt content
-// ============================================================
-
-// Generate content hash from user data to detect changes
-function generateContentHash(data: {
-  username: string;
-  agents: Array<{
-    name: string;
-    slug: string;
-    description?: string;
-    isPublic: boolean;
-    skills: Array<{ name: string; capabilities: Array<{ name: string; description: string }> }>;
-  }>;
-}): string {
-  const str = JSON.stringify(data);
-  // Simple hash for change detection
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
-  }
-  return hash.toString(16);
-}
-
-// Visibility flags per agent (mirrors schema publicConnect)
 type AgentVisibility = {
   showApi: boolean;
   showMcp: boolean;
@@ -68,7 +22,6 @@ type AgentVisibility = {
   showSkillFile: boolean;
 };
 
-// Default visibility when publicConnect is unset
 const DEFAULT_VISIBILITY: AgentVisibility = {
   showApi: true,
   showMcp: true,
@@ -76,43 +29,81 @@ const DEFAULT_VISIBILITY: AgentVisibility = {
   showSkillFile: true,
 };
 
-// Generate the llms.txt plain text content
+type SkillSnapshot = {
+  name: string;
+  bio: string;
+  capabilities: Array<{ name: string; description: string }>;
+  knowledgeDomains: string[];
+  communicationPrefs: { tone: string; timezone: string; availability: string };
+};
+
+type AgentSnapshot = {
+  name: string;
+  slug: string;
+  description?: string;
+  isPublic: boolean;
+  agentEmail?: string;
+  agentPhone?: string;
+  publicConnect?: AgentVisibility;
+  personality?: {
+    tone?: string;
+    speakingStyle?: string;
+    customInstructions?: string;
+  };
+  skills: Array<SkillSnapshot>;
+};
+
+type UserPrivacy = { showEmail?: boolean; showEndpoints?: boolean };
+
+type LlmsGenerationData = {
+  userId: Id<"users">;
+  username: string;
+  displayName?: string;
+  bio?: string;
+  userPrivacy?: UserPrivacy;
+  agents: Array<AgentSnapshot>;
+};
+
+function toLlmsResponse(record: Doc<"llmsTxt">) {
+  return {
+    txtContent: record.txtContent,
+    mdContent: record.mdContent,
+    generatedAt: record.generatedAt,
+  };
+}
+
+function generateContentHash(data: unknown): string {
+  const str = JSON.stringify(data);
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash |= 0;
+  }
+  return hash.toString(16);
+}
+
 function generateTxtContent(
   username: string,
   displayName: string | undefined,
   bio: string | undefined,
-  agents: Array<{
-    name: string;
-    slug: string;
-    description?: string;
-    isPublic: boolean;
-    agentEmail?: string;
-    publicConnect?: AgentVisibility;
-    skills: Array<{
-      name: string;
-      bio: string;
-      capabilities: Array<{ name: string; description: string }>;
-      knowledgeDomains: string[];
-    }>;
-  }>,
+  agents: Array<AgentSnapshot>,
   baseUrl: string,
-  userPrivacy?: { showEmail?: boolean; showEndpoints?: boolean }
+  userPrivacy?: UserPrivacy
 ): string {
   const lines: Array<string> = [];
+  const publicAgents = agents.filter((a) => a.isPublic);
 
-  // Header
   lines.push(`# ${displayName || username}'s AI Agents`);
   lines.push(`> ${bio || "AI-powered personal agents"}`);
   lines.push("");
   lines.push(`Profile: ${baseUrl}/${username}`);
-  // Only show default API if endpoints are visible
   if (userPrivacy?.showEndpoints !== false) {
     lines.push(`API: ${baseUrl}/api/v1/agents/${username}/messages`);
   }
+  lines.push(`llms.txt: ${baseUrl}/${username}/llms.txt`);
+  lines.push(`llms-full.md: ${baseUrl}/${username}/llms-full.md`);
   lines.push("");
-
-  // List public agents
-  const publicAgents = agents.filter((a) => a.isPublic);
 
   if (publicAgents.length === 0) {
     lines.push("No public agents available.");
@@ -124,15 +115,12 @@ function generateTxtContent(
 
   for (const agent of publicAgents) {
     const vis = agent.publicConnect ?? DEFAULT_VISIBILITY;
-
     lines.push(`### ${agent.name}`);
-    if (agent.description) {
-      lines.push(`> ${agent.description}`);
-    }
+    if (agent.description) lines.push(`> ${agent.description}`);
     lines.push("");
-
-    // Agent endpoints (respect visibility)
     lines.push(`- Slug: ${agent.slug}`);
+    lines.push(`- Agent llms.txt: ${baseUrl}/${username}/${agent.slug}/llms.txt`);
+    lines.push(`- Agent llms-full.md: ${baseUrl}/${username}/${agent.slug}/llms-full.md`);
     if (vis.showEmail && agent.agentEmail && userPrivacy?.showEmail !== false) {
       lines.push(`- Email: ${agent.agentEmail}`);
     }
@@ -143,66 +131,25 @@ function generateTxtContent(
       lines.push(`- MCP: ${baseUrl}/mcp/u/${username}/${agent.slug}`);
     }
     lines.push("");
-
-    // Skills and capabilities
-    if (agent.skills.length > 0) {
-      lines.push("#### Capabilities");
-      for (const skill of agent.skills) {
-        for (const cap of skill.capabilities) {
-          lines.push(`- ${cap.name}: ${cap.description}`);
-        }
-      }
-      lines.push("");
-
-      // Knowledge domains
-      const allDomains = agent.skills.flatMap((s) => s.knowledgeDomains);
-      if (allDomains.length > 0) {
-        lines.push(`#### Knowledge: ${allDomains.join(", ")}`);
-        lines.push("");
-      }
-    }
   }
 
-  // Footer
   lines.push("---");
   lines.push(`Generated: ${new Date().toISOString()}`);
-  lines.push(`Powered by HumanAgent`);
-
+  lines.push("Powered by HumanAgent");
   return lines.join("\n");
 }
 
-// Generate the llms-full.md markdown content with more details
 function generateMdContent(
   username: string,
   displayName: string | undefined,
   bio: string | undefined,
-  agents: Array<{
-    name: string;
-    slug: string;
-    description?: string;
-    isPublic: boolean;
-    agentEmail?: string;
-    agentPhone?: string;
-    publicConnect?: AgentVisibility;
-    personality?: {
-      tone?: string;
-      speakingStyle?: string;
-      customInstructions?: string;
-    };
-    skills: Array<{
-      name: string;
-      bio: string;
-      capabilities: Array<{ name: string; description: string }>;
-      knowledgeDomains: string[];
-      communicationPrefs: { tone: string; timezone: string; availability: string };
-    }>;
-  }>,
+  agents: Array<AgentSnapshot>,
   baseUrl: string,
-  userPrivacy?: { showEmail?: boolean; showEndpoints?: boolean }
+  userPrivacy?: UserPrivacy
 ): string {
   const lines: Array<string> = [];
+  const publicAgents = agents.filter((a) => a.isPublic);
 
-  // Header with metadata
   lines.push("---");
   lines.push(`title: "${displayName || username}'s AI Agents"`);
   lines.push(`description: "${bio || "AI-powered personal agents"}"`);
@@ -210,7 +157,6 @@ function generateMdContent(
   lines.push(`generated: "${new Date().toISOString()}"`);
   lines.push("---");
   lines.push("");
-
   lines.push(`# ${displayName || username}'s AI Agents`);
   lines.push("");
   if (bio) {
@@ -218,130 +164,213 @@ function generateMdContent(
     lines.push("");
   }
 
-  // Quick links (respect user-level endpoint visibility)
-  lines.push("## Quick Links");
+  lines.push("## Quick links");
   lines.push("");
-  lines.push(`- **Profile**: [${baseUrl}/${username}](${baseUrl}/${username})`);
+  lines.push(`- Profile: [${baseUrl}/${username}](${baseUrl}/${username})`);
   if (userPrivacy?.showEndpoints !== false) {
-    lines.push(`- **API Endpoint**: \`POST ${baseUrl}/api/v1/agents/${username}/messages\``);
+    lines.push(`- Default API: \`POST ${baseUrl}/api/v1/agents/${username}/messages\``);
   }
-  lines.push(`- **llms.txt**: [${baseUrl}/${username}/llms.txt](${baseUrl}/${username}/llms.txt)`);
-  lines.push(`- **Docs**: [${baseUrl}/api/v1/agents/${username}/docs.md](${baseUrl}/api/v1/agents/${username}/docs.md)`);
+  lines.push(`- Aggregate llms.txt: [${baseUrl}/${username}/llms.txt](${baseUrl}/${username}/llms.txt)`);
+  lines.push(`- Aggregate llms-full.md: [${baseUrl}/${username}/llms-full.md](${baseUrl}/${username}/llms-full.md)`);
   lines.push("");
-
-  // List public agents with full details
-  const publicAgents = agents.filter((a) => a.isPublic);
 
   if (publicAgents.length === 0) {
     lines.push("*No public agents available.*");
     return lines.join("\n");
   }
 
-  lines.push(`## Agents`);
+  lines.push("## Public agents");
   lines.push("");
-
   for (const agent of publicAgents) {
     const vis = agent.publicConnect ?? DEFAULT_VISIBILITY;
-
     lines.push(`### ${agent.name}`);
     lines.push("");
-
     if (agent.description) {
       lines.push(`> ${agent.description}`);
       lines.push("");
     }
-
-    // Contact info (filtered by visibility)
-    lines.push("#### Contact");
-    lines.push("");
-    lines.push(`| Method | Address |`);
-    lines.push(`|--------|---------|`);
+    lines.push(`- Agent llms.txt: [${baseUrl}/${username}/${agent.slug}/llms.txt](${baseUrl}/${username}/${agent.slug}/llms.txt)`);
+    lines.push(`- Agent llms-full.md: [${baseUrl}/${username}/${agent.slug}/llms-full.md](${baseUrl}/${username}/${agent.slug}/llms-full.md)`);
     if (vis.showApi) {
-      lines.push(`| API | \`POST ${baseUrl}/api/v1/agents/${username}/${agent.slug}/messages\` |`);
-    }
-    if (vis.showEmail && agent.agentEmail && userPrivacy?.showEmail !== false) {
-      lines.push(`| Email | ${agent.agentEmail} |`);
+      lines.push(`- API: \`POST ${baseUrl}/api/v1/agents/${username}/${agent.slug}/messages\``);
     }
     if (vis.showMcp) {
-      lines.push(`| MCP | \`${baseUrl}/mcp/u/${username}/${agent.slug}\` |`);
+      lines.push(`- MCP: \`${baseUrl}/mcp/u/${username}/${agent.slug}\``);
     }
-    if (vis.showSkillFile) {
-      lines.push(`| Skill File | [SKILL.md](${baseUrl}/u/${username}/${agent.slug}/SKILL.md) |`);
+    if (vis.showEmail && agent.agentEmail && userPrivacy?.showEmail !== false) {
+      lines.push(`- Email: ${agent.agentEmail}`);
     }
-    lines.push("");
-
-    // Personality
-    if (agent.personality) {
-      lines.push("#### Personality");
-      lines.push("");
-      if (agent.personality.tone) {
-        lines.push(`- **Tone**: ${agent.personality.tone}`);
-      }
-      if (agent.personality.speakingStyle) {
-        lines.push(`- **Style**: ${agent.personality.speakingStyle}`);
-      }
-      lines.push("");
-    }
-
-    // Skills and capabilities
-    if (agent.skills.length > 0) {
-      lines.push("#### Skills & Capabilities");
-      lines.push("");
-
-      for (const skill of agent.skills) {
-        lines.push(`**${skill.name}**`);
-        if (skill.bio) {
-          lines.push(`> ${skill.bio}`);
-        }
-        lines.push("");
-
-        if (skill.capabilities.length > 0) {
-          lines.push("| Capability | Description |");
-          lines.push("|------------|-------------|");
-          for (const cap of skill.capabilities) {
-            lines.push(`| ${cap.name} | ${cap.description} |`);
-          }
-          lines.push("");
-        }
-
-        if (skill.knowledgeDomains.length > 0) {
-          lines.push(`**Knowledge Domains**: ${skill.knowledgeDomains.join(", ")}`);
-          lines.push("");
-        }
-
-        if (skill.communicationPrefs) {
-          lines.push(`**Communication**: ${skill.communicationPrefs.tone} tone, ${skill.communicationPrefs.availability}`);
-          lines.push("");
-        }
-      }
-    }
-
-    lines.push("---");
     lines.push("");
   }
 
-  // API usage example
-  lines.push("## API Usage");
-  lines.push("");
-  lines.push("```bash");
-  lines.push(`curl -X POST ${baseUrl}/api/v1/agents/${username}/messages \\`);
-  lines.push(`  -H "Authorization: Bearer YOUR_API_KEY" \\`);
-  lines.push(`  -H "Content-Type: application/json" \\`);
-  lines.push(`  -d '{"content": "Hello, how can you help me?"}'`);
-  lines.push("```");
-  lines.push("");
-  lines.push("Content negotiation: request markdown with `Accept: text/markdown`.");
-  lines.push("");
-
-  // Footer
   lines.push("---");
-  lines.push("");
   lines.push(`*Generated by [HumanAgent](${baseUrl}) on ${new Date().toISOString()}*`);
-
   return lines.join("\n");
 }
 
-// Internal query to get data needed for generation
+function generateAgentTxtContent(
+  username: string,
+  displayName: string | undefined,
+  bio: string | undefined,
+  agent: AgentSnapshot,
+  baseUrl: string,
+  userPrivacy?: UserPrivacy
+): string {
+  const lines: Array<string> = [];
+  const vis = agent.publicConnect ?? DEFAULT_VISIBILITY;
+
+  lines.push(`# ${agent.name} (${username})`);
+  lines.push(`> ${agent.description || bio || "AI-powered public agent"}`);
+  lines.push("");
+  lines.push(`Profile: ${baseUrl}/${username}/${agent.slug}`);
+  lines.push(`Owner: ${displayName || username}`);
+  lines.push(`Aggregate llms.txt: ${baseUrl}/${username}/llms.txt`);
+  lines.push("");
+  if (vis.showApi && userPrivacy?.showEndpoints !== false) {
+    lines.push(`API: ${baseUrl}/api/v1/agents/${username}/${agent.slug}/messages`);
+  }
+  if (vis.showMcp && userPrivacy?.showEndpoints !== false) {
+    lines.push(`MCP: ${baseUrl}/mcp/u/${username}/${agent.slug}`);
+  }
+  if (vis.showEmail && agent.agentEmail && userPrivacy?.showEmail !== false) {
+    lines.push(`Email: ${agent.agentEmail}`);
+  }
+  if (vis.showSkillFile) {
+    lines.push(`Skill File: ${baseUrl}/u/${username}/${agent.slug}/SKILL.md`);
+  }
+  lines.push("");
+
+  if (agent.skills.length > 0) {
+    lines.push("## Capabilities");
+    lines.push("");
+    for (const skill of agent.skills) {
+      for (const cap of skill.capabilities) {
+        lines.push(`- ${cap.name}: ${cap.description}`);
+      }
+    }
+    lines.push("");
+  }
+
+  lines.push("---");
+  lines.push(`Generated: ${new Date().toISOString()}`);
+  lines.push("Powered by HumanAgent");
+  return lines.join("\n");
+}
+
+function generateAgentMdContent(
+  username: string,
+  displayName: string | undefined,
+  bio: string | undefined,
+  agent: AgentSnapshot,
+  baseUrl: string,
+  userPrivacy?: UserPrivacy
+): string {
+  const lines: Array<string> = [];
+  const vis = agent.publicConnect ?? DEFAULT_VISIBILITY;
+
+  lines.push("---");
+  lines.push(`title: "${agent.name} (${username})"`);
+  lines.push(`description: "${agent.description || bio || "AI-powered public agent"}"`);
+  lines.push(`profile: "${baseUrl}/${username}/${agent.slug}"`);
+  lines.push(`generated: "${new Date().toISOString()}"`);
+  lines.push("---");
+  lines.push("");
+  lines.push(`# ${agent.name}`);
+  lines.push("");
+  lines.push(`Owner: ${displayName || username}`);
+  lines.push("");
+  if (agent.description) {
+    lines.push(agent.description);
+    lines.push("");
+  }
+
+  lines.push("## Endpoints");
+  lines.push("");
+  if (vis.showApi && userPrivacy?.showEndpoints !== false) {
+    lines.push(`- API: \`POST ${baseUrl}/api/v1/agents/${username}/${agent.slug}/messages\``);
+  }
+  if (vis.showMcp && userPrivacy?.showEndpoints !== false) {
+    lines.push(`- MCP: \`${baseUrl}/mcp/u/${username}/${agent.slug}\``);
+  }
+  if (vis.showEmail && agent.agentEmail && userPrivacy?.showEmail !== false) {
+    lines.push(`- Email: ${agent.agentEmail}`);
+  }
+  if (vis.showSkillFile) {
+    lines.push(`- Skill file: [SKILL.md](${baseUrl}/u/${username}/${agent.slug}/SKILL.md)`);
+  }
+  lines.push(`- Aggregate llms index: [${baseUrl}/${username}/llms.txt](${baseUrl}/${username}/llms.txt)`);
+  lines.push("");
+
+  if (agent.skills.length > 0) {
+    lines.push("## Skills and capabilities");
+    lines.push("");
+    for (const skill of agent.skills) {
+      lines.push(`### ${skill.name}`);
+      lines.push("");
+      if (skill.bio) lines.push(skill.bio);
+      lines.push("");
+      if (skill.capabilities.length > 0) {
+        lines.push("| Capability | Description |");
+        lines.push("|------------|-------------|");
+        for (const cap of skill.capabilities) {
+          lines.push(`| ${cap.name} | ${cap.description} |`);
+        }
+        lines.push("");
+      }
+      if (skill.knowledgeDomains.length > 0) {
+        lines.push(`Knowledge domains: ${skill.knowledgeDomains.join(", ")}`);
+        lines.push("");
+      }
+    }
+  }
+
+  lines.push("---");
+  lines.push(`*Generated by [HumanAgent](${baseUrl}) on ${new Date().toISOString()}*`);
+  return lines.join("\n");
+}
+
+export const getByUsername = query({
+  args: { username: v.string() },
+  returns: v.union(llmsResponseValidator, v.null()),
+  handler: async (ctx, { username }) => {
+    const scopedRecord = await ctx.db
+      .query("llmsTxt")
+      .withIndex("by_username_and_scope", (q) =>
+        q.eq("username", username).eq("scope", "user")
+      )
+      .unique();
+    if (scopedRecord) return toLlmsResponse(scopedRecord);
+
+    const legacyCandidates = await ctx.db
+      .query("llmsTxt")
+      .withIndex("by_username", (q) => q.eq("username", username))
+      .take(20);
+    const legacyRecord =
+      legacyCandidates.find((record) => !record.scope && !record.agentSlug) ??
+      legacyCandidates[0] ??
+      null;
+    if (!legacyRecord) return null;
+
+    return toLlmsResponse(legacyRecord);
+  },
+});
+
+export const getByUsernameAndSlug = query({
+  args: { username: v.string(), slug: v.string() },
+  returns: v.union(llmsResponseValidator, v.null()),
+  handler: async (ctx, { username, slug }) => {
+    const record = await ctx.db
+      .query("llmsTxt")
+      .withIndex("by_username_and_agentSlug", (q) =>
+        q.eq("username", username).eq("agentSlug", slug)
+      )
+      .unique();
+    if (!record) return null;
+
+    return toLlmsResponse(record);
+  },
+});
+
 export const getGenerationData = internalQuery({
   args: { userId: v.id("users") },
   returns: v.union(v.any(), v.null()),
@@ -349,13 +378,11 @@ export const getGenerationData = internalQuery({
     const user = await ctx.db.get(userId);
     if (!user || !user.username) return null;
 
-    // Get all agents for this user
     const agents = await ctx.db
       .query("agents")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .collect();
 
-    // Get skills for each agent
     const agentsWithSkills = await Promise.all(
       agents.map(async (agent) => {
         const skills = await ctx.db
@@ -379,7 +406,7 @@ export const getGenerationData = internalQuery({
             knowledgeDomains: s.knowledgeDomains,
             communicationPrefs: s.communicationPrefs,
           })),
-        };
+        } satisfies AgentSnapshot;
       })
     );
 
@@ -388,59 +415,25 @@ export const getGenerationData = internalQuery({
       username: user.username,
       displayName: user.name,
       bio: user.bio,
-      userPrivacy: user.privacySettings as { showEmail?: boolean; showEndpoints?: boolean } | undefined,
+      userPrivacy: user.privacySettings as UserPrivacy | undefined,
       agents: agentsWithSkills,
     };
   },
 });
 
-// Type for generation data (shared between functions)
-type LlmsGenerationData = {
-  userId: string;
-  username: string;
-  displayName?: string;
-  bio?: string;
-  userPrivacy?: { showEmail?: boolean; showEndpoints?: boolean };
-  agents: Array<{
-    name: string;
-    slug: string;
-    description?: string;
-    isPublic: boolean;
-    agentEmail?: string;
-    agentPhone?: string;
-    publicConnect?: AgentVisibility;
-    personality?: {
-      tone?: string;
-      speakingStyle?: string;
-      customInstructions?: string;
-    };
-    skills: Array<{
-      name: string;
-      bio: string;
-      capabilities: Array<{ name: string; description: string }>;
-      knowledgeDomains: string[];
-      communicationPrefs: { tone: string; timezone: string; availability: string };
-    }>;
-  }>;
-};
-
-// Internal mutation to regenerate llms.txt for a user
 export const regenerate = internalMutation({
   args: { userId: v.id("users") },
   returns: v.union(v.id("llmsTxt"), v.null()),
   handler: async (ctx, { userId }) => {
-    // Get user data (inline to avoid circular reference)
     const user = await ctx.db.get(userId);
     if (!user || !user.username) return null;
 
-    // Get all agents for this user
     const agents = await ctx.db
       .query("agents")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .collect();
 
-    // Get skills for each agent, include publicConnect
-    const agentsWithSkills = await Promise.all(
+    const agentsWithSkills: Array<AgentSnapshot> = await Promise.all(
       agents.map(async (agent) => {
         const skills = await ctx.db
           .query("skills")
@@ -472,86 +465,114 @@ export const regenerate = internalMutation({
       username: user.username,
       displayName: user.name,
       bio: user.bio,
-      userPrivacy: user.privacySettings as { showEmail?: boolean; showEndpoints?: boolean } | undefined,
+      userPrivacy: user.privacySettings as UserPrivacy | undefined,
       agents: agentsWithSkills,
     };
 
     const baseUrl = process.env.SITE_URL || "https://humanagent.dev";
-
-    // Generate content hash (includes publicConnect for change detection)
-    const contentHash = generateContentHash({
-      username: data.username,
-      agents: data.agents.map((a) => ({
-        name: a.name,
-        slug: a.slug,
-        description: a.description,
-        isPublic: a.isPublic,
-        skills: a.skills.map((s) => ({
-          name: s.name,
-          capabilities: s.capabilities,
-        })),
-      })),
-    });
-
-    // Check if content has changed
-    const existing = await ctx.db
-      .query("llmsTxt")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .unique();
-
-    if (existing && existing.contentHash === contentHash) {
-      return existing._id;
-    }
-
-    // Generate content with privacy-safe filtering
-    const txtContent = generateTxtContent(
-      data.username,
-      data.displayName,
-      data.bio,
-      data.agents,
-      baseUrl,
-      data.userPrivacy
-    );
-
-    const mdContent = generateMdContent(
-      data.username,
-      data.displayName,
-      data.bio,
-      data.agents,
-      baseUrl,
-      data.userPrivacy
-    );
-
     const now = Date.now();
 
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        txtContent,
-        mdContent,
-        generatedAt: now,
-        contentHash,
+    const userHash = generateContentHash({
+      scope: "user",
+      username: data.username,
+      privacy: data.userPrivacy,
+      agents: data.agents
+        .filter((agent) => agent.isPublic)
+        .map((agent) => ({
+          name: agent.name,
+          slug: agent.slug,
+          description: agent.description,
+          isPublic: agent.isPublic,
+          visibility: agent.publicConnect,
+          skills: agent.skills.map((skill) => ({
+            name: skill.name,
+            capabilities: skill.capabilities,
+            knowledgeDomains: skill.knowledgeDomains,
+          })),
+        })),
+    });
+
+    const userRecordId = await upsertLlmsRecord(ctx, {
+      userId,
+      username: data.username,
+      scope: "user",
+      txtContent: generateTxtContent(
+        data.username,
+        data.displayName,
+        data.bio,
+        data.agents,
+        baseUrl,
+        data.userPrivacy
+      ),
+      mdContent: generateMdContent(
+        data.username,
+        data.displayName,
+        data.bio,
+        data.agents,
+        baseUrl,
+        data.userPrivacy
+      ),
+      generatedAt: now,
+      contentHash: userHash,
+    });
+
+    const publicAgents = data.agents.filter((agent) => agent.isPublic);
+    for (const agent of publicAgents) {
+      const agentHash = generateContentHash({
+        scope: "agent",
+        username: data.username,
+        slug: agent.slug,
+        privacy: data.userPrivacy,
+        visibility: agent.publicConnect,
+        agent,
       });
-      return existing._id;
-    } else {
-      return await ctx.db.insert("llmsTxt", {
+
+      await upsertLlmsRecord(ctx, {
         userId,
         username: data.username,
-        txtContent,
-        mdContent,
+        scope: "agent",
+        agentSlug: agent.slug,
+        txtContent: generateAgentTxtContent(
+          data.username,
+          data.displayName,
+          data.bio,
+          agent,
+          baseUrl,
+          data.userPrivacy
+        ),
+        mdContent: generateAgentMdContent(
+          data.username,
+          data.displayName,
+          data.bio,
+          agent,
+          baseUrl,
+          data.userPrivacy
+        ),
         generatedAt: now,
-        contentHash,
+        contentHash: agentHash,
       });
     }
+
+    const currentPublicSlugs = new Set(publicAgents.map((agent) => agent.slug));
+    const existingAgentScopedRecords = await ctx.db
+      .query("llmsTxt")
+      .withIndex("by_userId_and_scope", (q) =>
+        q.eq("userId", userId).eq("scope", "agent")
+      )
+      .collect();
+    await Promise.all(
+      existingAgentScopedRecords
+        .filter((record) => !record.agentSlug || !currentPublicSlugs.has(record.agentSlug))
+        .map((record) => ctx.db.delete(record._id))
+    );
+
+    return userRecordId;
   },
 });
 
-// ============================================================
-// Public Mutations - Manual regeneration
-// ============================================================
-
-// Manually trigger regeneration for authenticated user
 export const regenerateForUser = authedMutation({
   args: {},
+  returns: v.object({ success: v.boolean() }),
   handler: async (ctx) => {
     await ctx.scheduler.runAfter(0, internal.functions.llmsTxt.regenerate, {
       userId: ctx.userId,
@@ -561,11 +582,6 @@ export const regenerateForUser = authedMutation({
   },
 });
 
-// ============================================================
-// Internal - Batch regeneration for cron
-// ============================================================
-
-// Regenerate llms.txt for all users with changes
 export const regenerateAll = internalMutation({
   args: {},
   returns: v.object({
@@ -573,56 +589,54 @@ export const regenerateAll = internalMutation({
     regenerated: v.number(),
   }),
   handler: async (ctx) => {
-    // Get all users with usernames (public profiles)
-    const users = await ctx.db
-      .query("users")
-      .take(1000);
-
-    const usersWithUsernames = users.filter((u) => u.username);
-
+    const users = await ctx.db.query("users").take(1000);
+    const usersWithUsernames = users.filter((user) => user.username);
     let regenerated = 0;
 
     for (const user of usersWithUsernames) {
-      // Check if regeneration needed by comparing content hash
-      const existing = await ctx.db
-        .query("llmsTxt")
-        .withIndex("by_userId", (q) => q.eq("userId", user._id))
-        .unique();
-
-      // Get agents for hash computation
       const agents = await ctx.db
         .query("agents")
         .withIndex("by_userId", (q) => q.eq("userId", user._id))
         .collect();
 
-      // Build minimal data for hash
       const agentData = await Promise.all(
-        agents.map(async (agent) => {
-          const skills = await ctx.db
-            .query("skills")
-            .withIndex("by_agentId", (q) => q.eq("agentId", agent._id))
-            .collect();
-
-          return {
-            name: agent.name,
-            slug: agent.slug,
-            description: agent.description,
-            isPublic: agent.isPublic,
-            skills: skills.map((s) => ({
-              name: s.identity.name,
-              capabilities: s.capabilities,
-            })),
-          };
-        })
+        agents
+          .filter((agent) => agent.isPublic)
+          .map(async (agent) => {
+            const skills = await ctx.db
+              .query("skills")
+              .withIndex("by_agentId", (q) => q.eq("agentId", agent._id))
+              .collect();
+            return {
+              name: agent.name,
+              slug: agent.slug,
+              description: agent.description,
+              isPublic: agent.isPublic,
+              visibility: agent.publicConnect,
+              skills: skills.map((skill) => ({
+                name: skill.identity.name,
+                capabilities: skill.capabilities,
+                knowledgeDomains: skill.knowledgeDomains,
+              })),
+            };
+          })
       );
 
-      const contentHash = generateContentHash({
-        username: user.username!,
+      const expectedHash = generateContentHash({
+        scope: "user",
+        username: user.username,
+        privacy: user.privacySettings,
         agents: agentData,
       });
 
-      if (!existing || existing.contentHash !== contentHash) {
-        // Schedule regeneration
+      const existingUserRecord = await ctx.db
+        .query("llmsTxt")
+        .withIndex("by_userId_and_scope", (q) =>
+          q.eq("userId", user._id).eq("scope", "user")
+        )
+        .unique();
+
+      if (!existingUserRecord || existingUserRecord.contentHash !== expectedHash) {
         await ctx.scheduler.runAfter(0, internal.functions.llmsTxt.regenerate, {
           userId: user._id,
         });
@@ -633,3 +647,65 @@ export const regenerateAll = internalMutation({
     return { checked: usersWithUsernames.length, regenerated };
   },
 });
+
+async function upsertLlmsRecord(
+  ctx: MutationCtx,
+  payload: {
+    userId: Id<"users">;
+    username: string;
+    scope: "user" | "agent";
+    agentSlug?: string;
+    txtContent: string;
+    mdContent: string;
+    generatedAt: number;
+    contentHash: string;
+  }
+) {
+  const existing =
+    payload.scope === "agent" && payload.agentSlug
+      ? await ctx.db
+          .query("llmsTxt")
+          .withIndex("by_userId_and_scope_and_agentSlug", (q) =>
+            q
+              .eq("userId", payload.userId)
+              .eq("scope", payload.scope)
+              .eq("agentSlug", payload.agentSlug as string)
+          )
+          .unique()
+      : await ctx.db
+          .query("llmsTxt")
+          .withIndex("by_userId_and_scope", (q) =>
+            q.eq("userId", payload.userId).eq("scope", payload.scope)
+          )
+          .unique();
+
+  if (existing) {
+    if (
+      existing.contentHash === payload.contentHash &&
+      existing.txtContent === payload.txtContent &&
+      existing.mdContent === payload.mdContent
+    ) {
+      return existing._id;
+    }
+    await ctx.db.patch(existing._id, {
+      txtContent: payload.txtContent,
+      mdContent: payload.mdContent,
+      generatedAt: payload.generatedAt,
+      contentHash: payload.contentHash,
+      scope: payload.scope,
+      agentSlug: payload.agentSlug,
+    });
+    return existing._id;
+  }
+
+  return await ctx.db.insert("llmsTxt", {
+    userId: payload.userId,
+    username: payload.username,
+    scope: payload.scope,
+    agentSlug: payload.agentSlug,
+    txtContent: payload.txtContent,
+    mdContent: payload.mdContent,
+    generatedAt: payload.generatedAt,
+    contentHash: payload.contentHash,
+  });
+}

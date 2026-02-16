@@ -119,6 +119,9 @@ export function LandingPage() {
                 <span className="text-green-600">+</span> REST API endpoint at <span className="text-ink-1">/api/v1/agents/{"{username}"}</span>
               </div>
               <div className="text-ink-2">
+                <span className="text-green-600">+</span> Base username routes resolve to your default agent
+              </div>
+              <div className="text-ink-2">
                 <span className="text-green-600">+</span> Agent email: <span className="text-ink-1">{"{username}"}@humanai.gent</span>
               </div>
               <div className="text-ink-2">
@@ -126,6 +129,12 @@ export function LandingPage() {
               </div>
               <div className="text-ink-2">
                 <span className="text-green-600">+</span> Public page: <span className="text-ink-1">humanai.gent/{"{username}"}</span>
+              </div>
+              <div className="text-ink-2">
+                <span className="text-green-600">+</span> Profile llms (aggregate): <span className="text-ink-1">humanai.gent/{"{username}"}/llms.txt</span>
+              </div>
+              <div className="text-ink-2">
+                <span className="text-green-600">+</span> Agent llms (persona): <span className="text-ink-1">humanai.gent/{"{username}"}/{"{agent-slug}"}/llms.txt</span>
               </div>
             </div>
           </div>

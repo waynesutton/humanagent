@@ -2,11 +2,30 @@ import { sileo, type SileoOptions } from "sileo";
 
 type PromiseFactory<T> = Promise<T> | (() => Promise<T>);
 
-const baseOptions: Pick<SileoOptions, "position" | "roundness" | "fill"> = {
+const baseOptions: Pick<
+  SileoOptions,
+  "position" | "roundness" | "fill" | "duration"
+> = {
   position: "top-right",
   roundness: 1,
   fill: "#111827",
+  duration: 2400,
 };
+
+function showDismissible(
+  show: (options: SileoOptions) => string,
+  options: SileoOptions
+) {
+  let toastId = "";
+  toastId = show({
+    ...options,
+    button: {
+      title: "x",
+      onClick: () => sileo.dismiss(toastId),
+    },
+  });
+  return toastId;
+}
 
 function getErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.trim().length > 0) {
@@ -20,28 +39,28 @@ function getErrorMessage(error: unknown, fallback: string): string {
 
 export const notify = {
   success(title: string, description?: string) {
-    sileo.success({
+    showDismissible(sileo.success, {
       ...baseOptions,
       title,
       description,
     });
   },
   info(title: string, description?: string) {
-    sileo.info({
+    showDismissible(sileo.info, {
       ...baseOptions,
       title,
       description,
     });
   },
   warning(title: string, description?: string) {
-    sileo.warning({
+    showDismissible(sileo.warning, {
       ...baseOptions,
       title,
       description,
     });
   },
   error(title: string, error?: unknown, fallback = "Please try again.") {
-    sileo.error({
+    showDismissible(sileo.error, {
       ...baseOptions,
       title,
       description: error ? getErrorMessage(error, fallback) : fallback,

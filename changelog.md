@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added board project support with new schema table `boardProjects`, task-level project link (`tasks.projectId`), and index `by_userId_projectId`
+- Added board project Convex APIs in `convex/functions/board.ts`: `getProjects`, `createProject`, `updateProject`, `deleteProject`
+- Added dual board UI modes in `src/pages/BoardPage.tsx`: `Board view` and `Projects view` for status-driven or project-driven planning
+- Added project management UX in board page: create project form, project filter (`All projects` / `No project` / specific project), and project delete action that ungroups linked tasks
+- Added task project assignment in board create/edit flows so tasks can be grouped by project across agents
+- Added persistent board context labels that show active view and active project scope in the board header
+- Added per-agent llms discovery files at `/:username/:slug/llms.txt` and `/:username/:slug/llms-full.md` (plus `/u/:username/:slug/*` aliases)
 - Added 1:1 agent chat page at `/chat` with per-agent conversation threads and real-time AI responses powered by existing agent runtime (`processDashboardMessage` + `processMessage`)
 - Added chat-to-board task creation flow (`createTaskFromChat`) so a message draft can become a task in the board Inbox column, assigned to the current chat agent
 - Added in-thread task conversion in agent chat so any existing message bubble can be turned into a board task with one click
@@ -38,6 +45,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- Updated Settings to include a default-agent control wired to the same `setDefault` mutation as Agents, keeping base username API/MCP routing behavior in sync
+- Updated landing-page endpoint diagram copy to explicitly note that base username routes resolve to the configured default agent
+- Updated llms endpoint labels across canonical sharing surfaces to standardized wording: `Profile llms (aggregate)` and `Agent llms (persona)` (plus explicit `full` variants)
+- Updated board task cards and archived task cards to display project badges alongside status and agent labels
+- Updated board archived-task rendering to respect active agent and project filters
+- Updated frontend board API mapping in `src/lib/platformApi.ts` to include board project endpoints
+- Updated llms generation model to support both profile aggregate files and per-agent files with scoped records in `llmsTxt`
+- Updated public discovery surfaces (`LandingPage`, `PublicUserProfilePage`, `PublicAgentPage`, `PublicDocsPage`) to link and render both username-level and agent-level llms files
 - Updated API key model to support one universal key system with optional delegation overlay (`keyType`, `allowedAgentIds`, `allowedRouteGroups`) while preserving backwards compatibility
 - Updated HTTP gateway auth enforcement to require key ownership binding, route-group checks, and scoped access (`api:call` for REST message routes, `mcp:call` for MCP routes)
 - Updated Settings API key flow with advanced controls for key type, route groups, and optional agent-level restrictions
@@ -65,6 +80,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed `BoardPage` runtime hook-order crash by removing a conditional hook path and making project summary computation safe during loading
+- Fixed board context clarity by adding explicit labels for which project scope the board is currently showing
 - Fixed cross-user key namespace risk by enforcing `apiKey.userId === targetUser._id` in REST and MCP gateway checks
 - Fixed public connect endpoint clarity by adding profile-level messaging that API/MCP endpoints are authenticated while docs and sitemap endpoints remain public
 - Fixed Vite package export issue by removing invalid `sileo/dist/styles.css` import path usage from `main.tsx`

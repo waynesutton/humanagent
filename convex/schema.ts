@@ -476,10 +476,23 @@ export default defineSchema({
     createdAt: v.number(),
   }).index("by_userId", ["userId"]),
 
+  // Task board projects for grouping work across agents.
+  boardProjects: defineTable({
+    userId: v.id("users"),
+    name: v.string(),
+    description: v.optional(v.string()),
+    color: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_name", ["userId", "name"]),
+
   // Tasks / work items on the board
   tasks: defineTable({
     userId: v.id("users"),
     agentId: v.optional(v.id("agents")), // Which agent is assigned to this task
+    projectId: v.optional(v.id("boardProjects")), // Optional project grouping
     requesterUserId: v.optional(v.id("users")), // Cross-user task requester
     requesterAgentId: v.optional(v.id("agents")), // Requester's agent
     requestedBy: v.string(),
@@ -511,6 +524,7 @@ export default defineSchema({
   })
     .index("by_userId", ["userId"])
     .index("by_agentId", ["agentId"])
+    .index("by_userId_projectId", ["userId", "projectId"])
     .index("by_userId_status", ["userId", "status"])
     .index("by_userId_archived", ["userId", "isArchived"]),
 
@@ -748,6 +762,8 @@ export default defineSchema({
   llmsTxt: defineTable({
     userId: v.id("users"),
     username: v.string(), // Cached for fast lookup
+    scope: v.optional(v.union(v.literal("user"), v.literal("agent"))),
+    agentSlug: v.optional(v.string()),
     // Plain text version (llms.txt)
     txtContent: v.string(),
     // Markdown version (llms-full.md) with more details
@@ -758,7 +774,11 @@ export default defineSchema({
     contentHash: v.string(),
   })
     .index("by_userId", ["userId"])
-    .index("by_username", ["username"]),
+    .index("by_username", ["username"])
+    .index("by_userId_and_scope", ["userId", "scope"])
+    .index("by_userId_and_scope_and_agentSlug", ["userId", "scope", "agentSlug"])
+    .index("by_username_and_scope", ["username", "scope"])
+    .index("by_username_and_agentSlug", ["username", "agentSlug"]),
 
   // Webhook retry queue for transient processing failures.
   webhookRetries: defineTable({

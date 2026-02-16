@@ -54,15 +54,20 @@ export function PublicSitemapPage() {
 }
 
 export function PublicLlmsTxtPage() {
-  const { username } = useParams<{ username: string }>();
-  const llms = useQuery(
+  const { username, slug } = useParams<{ username: string; slug?: string }>();
+  const llmsByUsername = useQuery(
     api.functions.llmsTxt.getByUsername,
-    username ? { username } : "skip"
+    username && !slug ? { username } : "skip"
   );
+  const llmsByAgent = useQuery(
+    api.functions.llmsTxt.getByUsernameAndSlug,
+    username && slug ? { username, slug } : "skip"
+  );
+  const llms = llmsByAgent ?? llmsByUsername;
 
   return (
     <DocShell
-      title="llms.txt"
+      title={slug ? `Agent llms (persona) - ${slug}` : "Profile llms (aggregate)"}
       content={llms?.txtContent ?? (llms === null ? null : undefined)}
       notFound="No llms.txt content found for this profile."
     />
@@ -70,15 +75,24 @@ export function PublicLlmsTxtPage() {
 }
 
 export function PublicLlmsFullPage() {
-  const { username } = useParams<{ username: string }>();
-  const llms = useQuery(
+  const { username, slug } = useParams<{ username: string; slug?: string }>();
+  const llmsByUsername = useQuery(
     api.functions.llmsTxt.getByUsername,
-    username ? { username } : "skip"
+    username && !slug ? { username } : "skip"
   );
+  const llmsByAgent = useQuery(
+    api.functions.llmsTxt.getByUsernameAndSlug,
+    username && slug ? { username, slug } : "skip"
+  );
+  const llms = llmsByAgent ?? llmsByUsername;
 
   return (
     <DocShell
-      title="llms-full.md"
+      title={
+        slug
+          ? `Agent llms full (persona) - ${slug}`
+          : "Profile llms full (aggregate)"
+      }
       content={llms?.mdContent ?? (llms === null ? null : undefined)}
       notFound="No llms-full.md content found for this profile."
     />

@@ -8,6 +8,7 @@ import { platformApi } from "../lib/platformApi";
 // Type aliases for cleaner code
 type BoardColumn = Doc<"boardColumns">;
 type Agent = Doc<"agents">;
+type BoardProject = Doc<"boardProjects">;
 
 // Task type with optional agentId
 interface Task {
@@ -16,6 +17,7 @@ interface Task {
   status: string;
   boardColumnId?: Id<"boardColumns">;
   agentId?: Id<"agents">;
+  projectId?: Id<"boardProjects">;
   requester?: {
     userId?: Id<"users">;
     username?: string;
@@ -45,9 +47,12 @@ interface TaskAttachment {
 
 export function BoardPage() {
   const columns = useQuery(platformApi.convex.board.getColumns);
+  const projects = useQuery(platformApi.convex.board.getProjects);
   const tasks = useQuery(platformApi.convex.board.getTasks);
   const archivedTasks = useQuery(platformApi.convex.board.getArchivedTasks);
   const agents = useQuery(platformApi.convex.agents.list);
+  const createProject = useMutation(platformApi.convex.board.createProject);
+  const deleteProject = useMutation(platformApi.convex.board.deleteProject);
   const createTask = useMutation(platformApi.convex.board.createTask);
   const moveTask = useMutation(platformApi.convex.board.moveTask);
   const updateTask = useMutation(platformApi.convex.board.updateTask);
@@ -67,17 +72,24 @@ export function BoardPage() {
   const [newTaskText, setNewTaskText] = useState("");
   const [selectedColumn, setSelectedColumn] = useState<Id<"boardColumns"> | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<Id<"agents"> | "none">("none");
+  const [selectedProject, setSelectedProject] = useState<Id<"boardProjects"> | "none">("none");
   
   // Edit task
   const [editingTask, setEditingTask] = useState<Id<"tasks"> | null>(null);
   const [editDescription, setEditDescription] = useState("");
   const [editAgent, setEditAgent] = useState<Id<"agents"> | "none">("none");
+  const [editProject, setEditProject] = useState<Id<"boardProjects"> | "none">("none");
   
   // Drag state
   const [draggingTask, setDraggingTask] = useState<Id<"tasks"> | null>(null);
   
   // Filter by agent
   const [filterAgent, setFilterAgent] = useState<Id<"agents"> | "all">("all");
+  const [filterProject, setFilterProject] = useState<Id<"boardProjects"> | "all" | "none">("all");
+  const [boardView, setBoardView] = useState<"board" | "projects">("board");
+  const [showProjectComposer, setShowProjectComposer] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectDescription, setNewProjectDescription] = useState("");
   
   // Archive section expanded
   const [showArchive, setShowArchive] = useState(false);
@@ -110,20 +122,68 @@ export function BoardPage() {
         description: newTaskText.trim(),
         boardColumnId: selectedColumn,
         agentId: selectedAgent !== "none" ? selectedAgent : undefined,
+        projectId: selectedProject !== "none" ? selectedProject : undefined,
       });
       setNewTaskText("");
       setSelectedColumn(null);
       setSelectedAgent("none");
+      setSelectedProject("none");
       notify.success("Task created");
     } catch (error) {
       notify.error("Could not create task", error);
     }
   }
 
+  async function handleCreateProject(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newProjectName.trim()) return;
+    try {
+      const projectId = await createProject({
+        name: newProjectName.trim(),
+        description: newProjectDescription.trim() || undefined,
+      });
+      setNewProjectName("");
+      setNewProjectDescription("");
+      setShowProjectComposer(false);
+      setFilterProject(projectId);
+      setSelectedProject(projectId);
+      notify.success("Project created");
+    } catch (error) {
+      notify.error("Could not create project", error);
+    }
+  }
+
+  async function handleDeleteProject(projectId: Id<"boardProjects">) {
+    const projectName = projects?.find((project: BoardProject) => project._id === projectId)?.name ?? "project";
+    notify.confirmAction({
+      title: `Delete ${projectName}?`,
+      description: "Tasks stay on the board and become ungrouped.",
+      buttonTitle: "Delete project",
+      onConfirm: async () => {
+        try {
+          await deleteProject({ projectId });
+          if (filterProject === projectId) {
+            setFilterProject("all");
+          }
+          if (selectedProject === projectId) {
+            setSelectedProject("none");
+          }
+          if (editProject === projectId) {
+            setEditProject("none");
+          }
+          notify.success("Project deleted");
+        } catch (error) {
+          notify.error("Could not delete project", error);
+        }
+      },
+    });
+  }
+
   function startEditingTask(task: Task) {
     setEditingTask(task._id);
     setEditDescription(task.description);
     setEditAgent(task.agentId ?? "none");
+    setEditProject(task.projectId ?? "none");
   }
 
   async function handleUpdateTask() {
@@ -133,6 +193,7 @@ export function BoardPage() {
         taskId: editingTask,
         description: editDescription.trim() || undefined,
         agentId: editAgent !== "none" ? editAgent : null,
+        projectId: editProject !== "none" ? editProject : null,
       });
       setEditingTask(null);
       notify.success("Task updated");
@@ -286,24 +347,27 @@ export function BoardPage() {
     }
   }
 
+  function matchesFilters(task: Task) {
+    if (filterAgent !== "all" && task.agentId !== filterAgent) {
+      return false;
+    }
+    if (filterProject === "none" && task.projectId) {
+      return false;
+    }
+    if (filterProject !== "all" && filterProject !== "none" && task.projectId !== filterProject) {
+      return false;
+    }
+    return true;
+  }
+
   function getTasksForColumn(columnId: Id<"boardColumns">) {
     if (!tasks) return [];
-    let filtered = tasks.filter((t: Task) => t.boardColumnId === columnId);
-    // Apply agent filter
-    if (filterAgent !== "all") {
-      filtered = filtered.filter((t: Task) => t.agentId === filterAgent);
-    }
-    return filtered;
+    return tasks.filter((t: Task) => t.boardColumnId === columnId && matchesFilters(t));
   }
 
   function getUnassignedTasks() {
     if (!tasks) return [];
-    let filtered = tasks.filter((t: Task) => !t.boardColumnId);
-    // Apply agent filter
-    if (filterAgent !== "all") {
-      filtered = filtered.filter((t: Task) => t.agentId === filterAgent);
-    }
-    return filtered;
+    return tasks.filter((t: Task) => !t.boardColumnId && matchesFilters(t));
   }
 
   // Get agent name by ID
@@ -313,7 +377,72 @@ export function BoardPage() {
     return agent?.name ?? null;
   }
 
-  if (!columns || !tasks || !agents || archivedTasks === undefined) {
+  function getProjectName(projectId: Id<"boardProjects"> | undefined): string | null {
+    if (!projectId || !projects) return null;
+    const project = projects.find((p: BoardProject) => p._id === projectId);
+    return project?.name ?? null;
+  }
+
+  const filteredTasks = tasks?.filter((task: Task) => matchesFilters(task)) ?? [];
+  const projectSummaries = (() => {
+    const byProjectId = new Map<
+      string,
+      {
+        id: Id<"boardProjects"> | "none";
+        name: string;
+        description?: string;
+        taskCount: number;
+        completedCount: number;
+        inProgressCount: number;
+        pendingCount: number;
+        failedCount: number;
+        agentIds: Set<Id<"agents">>;
+      }
+    >();
+
+    for (const project of (projects as BoardProject[] | undefined) ?? []) {
+      byProjectId.set(project._id, {
+        id: project._id,
+        name: project.name,
+        description: project.description,
+        taskCount: 0,
+        completedCount: 0,
+        inProgressCount: 0,
+        pendingCount: 0,
+        failedCount: 0,
+        agentIds: new Set<Id<"agents">>(),
+      });
+    }
+    byProjectId.set("none", {
+      id: "none",
+      name: "No project",
+      taskCount: 0,
+      completedCount: 0,
+      inProgressCount: 0,
+      pendingCount: 0,
+      failedCount: 0,
+      agentIds: new Set<Id<"agents">>(),
+    });
+
+    for (const task of filteredTasks) {
+      const key = task.projectId ?? "none";
+      const summary = byProjectId.get(key);
+      if (!summary) continue;
+
+      summary.taskCount += 1;
+      if (task.status === "completed") summary.completedCount += 1;
+      if (task.status === "in_progress") summary.inProgressCount += 1;
+      if (task.status === "pending") summary.pendingCount += 1;
+      if (task.status === "failed") summary.failedCount += 1;
+      if (task.agentId) summary.agentIds.add(task.agentId);
+    }
+
+    return Array.from(byProjectId.values())
+      .filter((summary) => summary.taskCount > 0 || summary.id !== "none")
+      .sort((a, b) => b.taskCount - a.taskCount);
+  })();
+
+  if (!columns || !tasks || !projects || !agents || archivedTasks === undefined) {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center py-20">
@@ -328,6 +457,14 @@ export function BoardPage() {
 
   const sortedColumns = [...columns].sort((a, b) => a.order - b.order);
   const unassignedTasks = getUnassignedTasks();
+  const filteredArchivedTasks = archivedTasks.filter((task: Task) => matchesFilters(task));
+  const currentProjectLabel =
+    filterProject === "all"
+      ? "All projects"
+      : filterProject === "none"
+        ? "No project"
+        : getProjectName(filterProject) ?? "Selected project";
+
   const detailTask =
     (tasks.find((task: Task) => task._id === detailsTaskId) as Task | undefined) ??
     (archivedTasks.find((task: Task) => task._id === detailsTaskId) as Task | undefined);
@@ -340,10 +477,40 @@ export function BoardPage() {
           <div>
             <h1 className="text-2xl font-semibold text-ink-0">Task Board</h1>
             <p className="mt-1 text-ink-1">
-              Track tasks your agents are working on.
+              Plan work by status, project, or assigned agent.
             </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-surface-1 px-2.5 py-1 text-xs text-ink-1">
+                View: {boardView === "board" ? "Board" : "Projects"}
+              </span>
+              <span className="rounded-full bg-surface-1 px-2.5 py-1 text-xs text-ink-1">
+                Project scope: {currentProjectLabel}
+              </span>
+            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center rounded-lg bg-surface-1 p-1">
+              <button
+                type="button"
+                onClick={() => setBoardView("board")}
+                className={`rounded-md px-3 py-1.5 text-sm ${
+                  boardView === "board" ? "bg-surface-0 text-ink-0 shadow-card" : "text-ink-1"
+                }`}
+              >
+                Board view
+              </button>
+              <button
+                type="button"
+                onClick={() => setBoardView("projects")}
+                className={`rounded-md px-3 py-1.5 text-sm ${
+                  boardView === "projects"
+                    ? "bg-surface-0 text-ink-0 shadow-card"
+                    : "text-ink-1"
+                }`}
+              >
+                Projects view
+              </button>
+            </div>
             {/* Agent filter */}
             <select
               value={filterAgent}
@@ -355,6 +522,28 @@ export function BoardPage() {
                 <option key={agent._id} value={agent._id}>{agent.name}</option>
               ))}
             </select>
+            <select
+              value={filterProject}
+              onChange={(e) =>
+                setFilterProject(e.target.value as Id<"boardProjects"> | "all" | "none")
+              }
+              className="input"
+            >
+              <option value="all">All projects</option>
+              <option value="none">No project</option>
+              {projects.map((project: BoardProject) => (
+                <option key={project._id} value={project._id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => setShowProjectComposer((value) => !value)}
+              className="btn-secondary whitespace-nowrap text-sm"
+            >
+              {showProjectComposer ? "Close project form" : "New project"}
+            </button>
             {completedTasksCount > 0 && (
               <button
                 onClick={handleArchiveCompleted}
@@ -378,6 +567,33 @@ export function BoardPage() {
             </button>
           </div>
         </div>
+
+        {showProjectComposer && (
+          <form onSubmit={handleCreateProject} className="mt-4 card">
+            <div className="grid gap-3 md:grid-cols-[1.2fr_2fr_auto]">
+              <input
+                type="text"
+                value={newProjectName}
+                onChange={(e) => setNewProjectName(e.target.value)}
+                placeholder="Project name"
+                className="input"
+                maxLength={80}
+                autoFocus
+              />
+              <input
+                type="text"
+                value={newProjectDescription}
+                onChange={(e) => setNewProjectDescription(e.target.value)}
+                placeholder="Optional project summary"
+                className="input"
+                maxLength={140}
+              />
+              <button type="submit" className="btn-accent" disabled={!newProjectName.trim()}>
+                Create project
+              </button>
+            </div>
+          </form>
+        )}
 
         {/* New task form */}
         {selectedColumn && (
@@ -412,6 +628,18 @@ export function BoardPage() {
                   <option key={agent._id} value={agent._id}>{agent.name}</option>
                 ))}
               </select>
+              <select
+                value={selectedProject}
+                onChange={(e) => setSelectedProject(e.target.value as Id<"boardProjects"> | "none")}
+                className="input w-44"
+              >
+                <option value="none">No project</option>
+                {projects.map((project: BoardProject) => (
+                  <option key={project._id} value={project._id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
               <button type="submit" className="btn-accent" disabled={!newTaskText.trim()}>
                 Add
               </button>
@@ -420,6 +648,7 @@ export function BoardPage() {
                 onClick={() => {
                   setSelectedColumn(null);
                   setSelectedAgent("none");
+                  setSelectedProject("none");
                 }}
                 className="btn-secondary"
               >
@@ -457,6 +686,21 @@ export function BoardPage() {
                     ))}
                   </select>
                 </div>
+                <div>
+                  <label className="block text-sm font-medium text-ink-0">Project</label>
+                  <select
+                    value={editProject}
+                    onChange={(e) => setEditProject(e.target.value as Id<"boardProjects"> | "none")}
+                    className="input mt-1.5"
+                  >
+                    <option value="none">No project</option>
+                    {projects.map((project: BoardProject) => (
+                      <option key={project._id} value={project._id}>
+                        {project.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div className="mt-6 flex justify-end gap-3">
                 <button onClick={() => setEditingTask(null)} className="btn-secondary">Cancel</button>
@@ -473,10 +717,24 @@ export function BoardPage() {
                 <div>
                   <h2 className="font-semibold text-ink-0">Task details</h2>
                   <p className="mt-1 text-sm text-ink-1">{detailTask.description}</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <StatusBadge status={detailTask.status} />
+                    {getAgentName(detailTask.agentId) && (
+                      <span className="rounded-full bg-accent/10 px-2 py-0.5 text-xs text-accent">
+                        {getAgentName(detailTask.agentId)}
+                      </span>
+                    )}
+                    {getProjectName(detailTask.projectId) && (
+                      <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs text-ink-1">
+                        {getProjectName(detailTask.projectId)}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <button
                   onClick={() => setDetailsTaskId(null)}
                   className="rounded p-1 text-ink-2 hover:bg-surface-2"
+                  aria-label="Close task details"
                 >
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -572,54 +830,125 @@ export function BoardPage() {
           </div>
         )}
 
-        {/* Board */}
-        <div className="mt-6 grid gap-4 lg:grid-cols-3">
-          {sortedColumns.map((column) => {
-            const columnTasks = getTasksForColumn(column._id);
-            return (
-              <div
-                key={column._id}
-                className="rounded-xl border border-surface-3 bg-surface-1 p-4"
-                onDragOver={handleDragOver}
-                onDrop={() => handleDrop(column._id)}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <h2 className="font-medium text-ink-0">{column.name}</h2>
-                    <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs text-ink-1">
-                      {columnTasks.length}
-                    </span>
+        {boardView === "board" ? (
+          <div className="mt-6 grid gap-4 lg:grid-cols-3">
+            {sortedColumns.map((column) => {
+              const columnTasks = getTasksForColumn(column._id);
+              return (
+                <div
+                  key={column._id}
+                  className="rounded-xl border border-surface-3 bg-surface-1 p-4"
+                  onDragOver={handleDragOver}
+                  onDrop={() => handleDrop(column._id)}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <h2 className="font-medium text-ink-0">{column.name}</h2>
+                      <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs text-ink-1">
+                        {columnTasks.length}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 space-y-2">
+                    {columnTasks.length === 0 ? (
+                      <div className="rounded-lg border-2 border-dashed border-surface-3 py-8 text-center">
+                        <p className="text-sm text-ink-2">No tasks</p>
+                      </div>
+                    ) : (
+                      columnTasks.map((task: Task) => (
+                        <TaskCard
+                          key={task._id}
+                          task={task}
+                          agentName={getAgentName(task.agentId)}
+                          projectName={getProjectName(task.projectId)}
+                          onDragStart={() => handleDragStart(task._id)}
+                          onEdit={() => startEditingTask(task)}
+                          onOpenDetails={() => setDetailsTaskId(task._id)}
+                          onDelete={() => handleDeleteTask(task._id)}
+                          onArchive={() => handleArchiveTask(task._id)}
+                          isDragging={draggingTask === task._id}
+                        />
+                      ))
+                    )}
                   </div>
                 </div>
-
-                <div className="mt-4 space-y-2">
-                  {columnTasks.length === 0 ? (
-                    <div className="rounded-lg border-2 border-dashed border-surface-3 py-8 text-center">
-                      <p className="text-sm text-ink-2">No tasks</p>
-                    </div>
-                  ) : (
-                    columnTasks.map((task: Task) => (
-                      <TaskCard
-                        key={task._id}
-                        task={task}
-                        agentName={getAgentName(task.agentId)}
-                        onDragStart={() => handleDragStart(task._id)}
-                        onEdit={() => startEditingTask(task)}
-                        onOpenDetails={() => setDetailsTaskId(task._id)}
-                        onDelete={() => handleDeleteTask(task._id)}
-                        onArchive={() => handleArchiveTask(task._id)}
-                        isDragging={draggingTask === task._id}
-                      />
-                    ))
-                  )}
-                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="mt-6 grid gap-4 lg:grid-cols-3">
+            {projectSummaries.length === 0 ? (
+              <div className="card lg:col-span-3">
+                <h2 className="font-medium text-ink-0">No tasks yet</h2>
+                <p className="mt-1 text-sm text-ink-1">
+                  Create a task or project to start organizing work.
+                </p>
               </div>
-            );
-          })}
-        </div>
+            ) : (
+              projectSummaries.map((summary) => {
+                const projectId = summary.id === "none" ? null : summary.id;
+                return (
+                <div key={summary.id} className="card">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h2 className="font-medium text-ink-0">{summary.name}</h2>
+                      {summary.description && (
+                        <p className="mt-1 text-sm text-ink-1">{summary.description}</p>
+                      )}
+                    </div>
+                    {projectId && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteProject(projectId)}
+                        className="text-xs text-ink-2 hover:text-red-600"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                  <div className="mt-4 grid grid-cols-4 gap-2 text-center">
+                    <div className="rounded-lg bg-surface-1 p-2">
+                      <p className="text-lg font-semibold tabular-nums text-ink-0">{summary.taskCount}</p>
+                      <p className="text-xs text-ink-2">Total</p>
+                    </div>
+                    <div className="rounded-lg bg-surface-1 p-2">
+                      <p className="text-lg font-semibold tabular-nums text-ink-0">{summary.pendingCount}</p>
+                      <p className="text-xs text-ink-2">Pending</p>
+                    </div>
+                    <div className="rounded-lg bg-surface-1 p-2">
+                      <p className="text-lg font-semibold tabular-nums text-ink-0">{summary.inProgressCount}</p>
+                      <p className="text-xs text-ink-2">In progress</p>
+                    </div>
+                    <div className="rounded-lg bg-surface-1 p-2">
+                      <p className="text-lg font-semibold tabular-nums text-ink-0">{summary.completedCount}</p>
+                      <p className="text-xs text-ink-2">Done</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex items-center justify-between">
+                    <p className="text-xs text-ink-2">
+                      {summary.agentIds.size} agent{summary.agentIds.size !== 1 ? "s" : ""} active
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFilterProject(summary.id);
+                        setBoardView("board");
+                      }}
+                      className="btn-secondary text-sm"
+                    >
+                      Open on board
+                    </button>
+                  </div>
+                </div>
+                );
+              })
+            )}
+          </div>
+        )}
 
         {/* Unassigned tasks */}
-        {unassignedTasks.length > 0 && (
+        {boardView === "board" && unassignedTasks.length > 0 && (
           <div className="mt-6">
             <h2 className="font-medium text-ink-0">Unassigned tasks</h2>
             <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -628,6 +957,7 @@ export function BoardPage() {
                   key={task._id}
                   task={task}
                   agentName={getAgentName(task.agentId)}
+                  projectName={getProjectName(task.projectId)}
                   onDragStart={() => handleDragStart(task._id)}
                   onEdit={() => startEditingTask(task)}
                   onOpenDetails={() => setDetailsTaskId(task._id)}
@@ -641,7 +971,7 @@ export function BoardPage() {
         )}
 
         {/* Archived tasks section */}
-        {archivedTasks.length > 0 && (
+        {filteredArchivedTasks.length > 0 && (
           <div className="mt-8 border-t border-surface-3 pt-6">
             <button
               onClick={() => setShowArchive(!showArchive)}
@@ -661,7 +991,7 @@ export function BoardPage() {
               </svg>
               <span className="font-medium">Archived tasks</span>
               <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs">
-                {archivedTasks.length}
+                {filteredArchivedTasks.length}
               </span>
             </button>
 
@@ -669,7 +999,7 @@ export function BoardPage() {
               <div className="mt-4">
                 <div className="mb-4 flex items-center justify-between">
                   <p className="text-sm text-ink-2">
-                    {archivedTasks.length} archived task{archivedTasks.length !== 1 ? "s" : ""}
+                    {filteredArchivedTasks.length} archived task{filteredArchivedTasks.length !== 1 ? "s" : ""}
                   </p>
                   <button
                     onClick={handleDeleteAllArchived}
@@ -679,11 +1009,12 @@ export function BoardPage() {
                   </button>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {archivedTasks.map((task: Task) => (
+                  {filteredArchivedTasks.map((task: Task) => (
                     <ArchivedTaskCard
                       key={task._id}
                       task={task}
                       agentName={getAgentName(task.agentId)}
+                      projectName={getProjectName(task.projectId)}
                       onOpenDetails={() => setDetailsTaskId(task._id)}
                       onRestore={() => handleUnarchiveTask(task._id)}
                       onDelete={() => handleDeleteTask(task._id)}
@@ -702,6 +1033,7 @@ export function BoardPage() {
 function TaskCard({
   task,
   agentName,
+  projectName,
   onDragStart,
   onEdit,
   onOpenDetails,
@@ -711,6 +1043,7 @@ function TaskCard({
 }: {
   task: Task;
   agentName: string | null;
+  projectName: string | null;
   onDragStart: () => void;
   onEdit: () => void;
   onOpenDetails: () => void;
@@ -738,6 +1071,7 @@ function TaskCard({
             onClick={(e) => { e.stopPropagation(); onOpenDetails(); }}
             className="rounded p-1 text-ink-2 hover:bg-surface-2 hover:text-ink-0"
             title="Details"
+            aria-label="Open task details"
           >
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2m5-2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -747,6 +1081,7 @@ function TaskCard({
             onClick={(e) => { e.stopPropagation(); onEdit(); }}
             className="rounded p-1 text-ink-2 hover:bg-surface-2 hover:text-ink-0"
             title="Edit"
+            aria-label="Edit task"
           >
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -756,6 +1091,7 @@ function TaskCard({
             onClick={(e) => { e.stopPropagation(); onArchive(); }}
             className="rounded p-1 text-ink-2 hover:bg-surface-2 hover:text-ink-0"
             title="Archive"
+            aria-label="Archive task"
           >
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
@@ -765,6 +1101,7 @@ function TaskCard({
             onClick={(e) => { e.stopPropagation(); onDelete(); }}
             className="rounded p-1 text-ink-2 hover:bg-red-100 hover:text-red-600"
             title="Delete"
+            aria-label="Delete task"
           >
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -778,6 +1115,11 @@ function TaskCard({
           {agentName && (
             <span className="rounded-full bg-accent/10 px-2 py-0.5 text-xs text-accent">
               {agentName}
+            </span>
+          )}
+          {projectName && (
+            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs text-ink-1">
+              {projectName}
             </span>
           )}
           {requestedByLabel && (
@@ -798,12 +1140,14 @@ function TaskCard({
 function ArchivedTaskCard({
   task,
   agentName,
+  projectName,
   onOpenDetails,
   onRestore,
   onDelete,
 }: {
   task: Task;
   agentName: string | null;
+  projectName: string | null;
   onOpenDetails: () => void;
   onRestore: () => void;
   onDelete: () => void;
@@ -822,6 +1166,7 @@ function ArchivedTaskCard({
             onClick={onOpenDetails}
             className="rounded p-1 text-ink-2 hover:bg-surface-2 hover:text-ink-0"
             title="Details"
+            aria-label="Open task details"
           >
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2m5-2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -831,6 +1176,7 @@ function ArchivedTaskCard({
             onClick={onRestore}
             className="rounded p-1 text-ink-2 hover:bg-green-100 hover:text-green-600"
             title="Restore task"
+            aria-label="Restore task"
           >
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
@@ -840,6 +1186,7 @@ function ArchivedTaskCard({
             onClick={onDelete}
             className="rounded p-1 text-ink-2 hover:bg-red-100 hover:text-red-600"
             title="Delete permanently"
+            aria-label="Delete task permanently"
           >
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -855,6 +1202,11 @@ function ArchivedTaskCard({
           {agentName && (
             <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs text-ink-2">
               {agentName}
+            </span>
+          )}
+          {projectName && (
+            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs text-ink-2">
+              {projectName}
             </span>
           )}
           {requestedByLabel && (

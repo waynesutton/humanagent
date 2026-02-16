@@ -1558,6 +1558,11 @@ cors.route({
 // llms.txt - AI discoverability file for user's agents
 // ============================================================
 
+const NO_AGENTS_TEXT =
+  "# No agents found\n\nThis user has not set up any public agents yet.";
+const NO_AGENT_TEXT =
+  "# Agent not found\n\nThis public agent does not exist or is not available.";
+
 // Serve llms.txt (plain text version)
 cors.route({
   path: "/u/:username/llms.txt",
@@ -1575,7 +1580,7 @@ cors.route({
     });
 
     if (!llmsTxt) {
-      return new Response("# No agents found\n\nThis user has not set up any public agents yet.", {
+      return new Response(NO_AGENTS_TEXT, {
         status: 404,
         headers: { "Content-Type": "text/plain; charset=utf-8" },
       });
@@ -1608,7 +1613,7 @@ cors.route({
     });
 
     if (!llmsTxt) {
-      return new Response("# No agents found\n\nThis user has not set up any public agents yet.", {
+      return new Response(NO_AGENTS_TEXT, {
         status: 404,
         headers: { "Content-Type": "text/markdown; charset=utf-8" },
       });
@@ -1642,7 +1647,7 @@ cors.route({
     });
 
     if (!llmsTxt) {
-      return new Response("# No agents found\n\nThis user has not set up any public agents yet.", {
+      return new Response(NO_AGENTS_TEXT, {
         status: 404,
         headers: { "Content-Type": "text/plain; charset=utf-8" },
       });
@@ -1675,7 +1680,153 @@ cors.route({
     });
 
     if (!llmsTxt) {
-      return new Response("# No agents found\n\nThis user has not set up any public agents yet.", {
+      return new Response(NO_AGENTS_TEXT, {
+        status: 404,
+        headers: { "Content-Type": "text/markdown; charset=utf-8" },
+      });
+    }
+
+    return new Response(llmsTxt.mdContent, {
+      headers: {
+        "Content-Type": "text/markdown; charset=utf-8",
+        "Cache-Control": "public, max-age=3600",
+        "X-Generated-At": new Date(llmsTxt.generatedAt).toISOString(),
+        "X-Markdown-Tokens": String(Math.ceil(llmsTxt.mdContent.length / 4)),
+      },
+    });
+  }),
+});
+
+// Canonical per-agent llms path: /:username/:slug/llms.txt
+cors.route({
+  path: "/:username/:slug/llms.txt",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const url = new URL(request.url);
+    const pathParts = url.pathname.split("/");
+    const username = pathParts[1];
+    const slug = pathParts[2];
+
+    if (!username || !slug) {
+      return new Response("Username and slug are required", { status: 400 });
+    }
+
+    const llmsTxt = await ctx.runQuery(api.functions.llmsTxt.getByUsernameAndSlug, {
+      username,
+      slug,
+    });
+
+    if (!llmsTxt) {
+      return new Response(NO_AGENT_TEXT, {
+        status: 404,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
+    }
+
+    return new Response(llmsTxt.txtContent, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "public, max-age=3600",
+        "X-Generated-At": new Date(llmsTxt.generatedAt).toISOString(),
+      },
+    });
+  }),
+});
+
+// Canonical per-agent llms path: /:username/:slug/llms-full.md
+cors.route({
+  path: "/:username/:slug/llms-full.md",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const url = new URL(request.url);
+    const pathParts = url.pathname.split("/");
+    const username = pathParts[1];
+    const slug = pathParts[2];
+
+    if (!username || !slug) {
+      return new Response("Username and slug are required", { status: 400 });
+    }
+
+    const llmsTxt = await ctx.runQuery(api.functions.llmsTxt.getByUsernameAndSlug, {
+      username,
+      slug,
+    });
+
+    if (!llmsTxt) {
+      return new Response(NO_AGENT_TEXT, {
+        status: 404,
+        headers: { "Content-Type": "text/markdown; charset=utf-8" },
+      });
+    }
+
+    return new Response(llmsTxt.mdContent, {
+      headers: {
+        "Content-Type": "text/markdown; charset=utf-8",
+        "Cache-Control": "public, max-age=3600",
+        "X-Generated-At": new Date(llmsTxt.generatedAt).toISOString(),
+        "X-Markdown-Tokens": String(Math.ceil(llmsTxt.mdContent.length / 4)),
+      },
+    });
+  }),
+});
+
+// Backwards-compatible per-agent llms alias: /u/:username/:slug/llms.txt
+cors.route({
+  path: "/u/:username/:slug/llms.txt",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const url = new URL(request.url);
+    const pathParts = url.pathname.split("/");
+    const username = pathParts[2];
+    const slug = pathParts[3];
+
+    if (!username || !slug) {
+      return new Response("Username and slug are required", { status: 400 });
+    }
+
+    const llmsTxt = await ctx.runQuery(api.functions.llmsTxt.getByUsernameAndSlug, {
+      username,
+      slug,
+    });
+
+    if (!llmsTxt) {
+      return new Response(NO_AGENT_TEXT, {
+        status: 404,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
+    }
+
+    return new Response(llmsTxt.txtContent, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "public, max-age=3600",
+        "X-Generated-At": new Date(llmsTxt.generatedAt).toISOString(),
+      },
+    });
+  }),
+});
+
+// Backwards-compatible per-agent llms alias: /u/:username/:slug/llms-full.md
+cors.route({
+  path: "/u/:username/:slug/llms-full.md",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const url = new URL(request.url);
+    const pathParts = url.pathname.split("/");
+    const username = pathParts[2];
+    const slug = pathParts[3];
+
+    if (!username || !slug) {
+      return new Response("Username and slug are required", { status: 400 });
+    }
+
+    const llmsTxt = await ctx.runQuery(api.functions.llmsTxt.getByUsernameAndSlug, {
+      username,
+      slug,
+    });
+
+    if (!llmsTxt) {
+      return new Response(NO_AGENT_TEXT, {
         status: 404,
         headers: { "Content-Type": "text/markdown; charset=utf-8" },
       });
@@ -1711,7 +1862,7 @@ cors.route({
     });
 
     if (!llmsTxt) {
-      return new Response("# No agents found\n\nThis user has not set up any public agents yet.", {
+      return new Response(NO_AGENTS_TEXT, {
         status: 404,
         headers: { "Content-Type": "text/plain; charset=utf-8" },
       });
@@ -1745,7 +1896,7 @@ cors.route({
     });
 
     if (!llmsTxt) {
-      return new Response("# No agents found\n\nThis user has not set up any public agents yet.", {
+      return new Response(NO_AGENTS_TEXT, {
         status: 404,
         headers: { "Content-Type": "text/markdown; charset=utf-8" },
       });

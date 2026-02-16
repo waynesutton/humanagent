@@ -380,7 +380,7 @@ export function PublicUserProfilePage() {
   return (
     <div className="min-h-screen bg-surface-0">
       <nav className="sticky top-0 z-40 border-b border-surface-3 bg-surface-0/80 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4 sm:px-6">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6">
           <Link to="/" className="flex items-center gap-2">
             <div className="flex h-7 w-7 items-center justify-center bg-ink-0">
               <span className="text-xs font-bold text-surface-0">H</span>
@@ -431,115 +431,103 @@ export function PublicUserProfilePage() {
                     ))}
                   </div>
                 )}
+
+                <div className="mt-4 border border-surface-3 bg-surface-1 p-4">
+                  <h3 className="text-sm font-medium text-ink-0">Request an agent to do a task</h3>
+                  <p className="mt-1 text-sm text-ink-2">
+                    Sends the task into the target agent board Inbox. You must have a profile and at least one agent.
+                  </p>
+
+                  {viewer === undefined ? (
+                    <div className="mt-3 border border-surface-3 bg-surface-0 p-3 text-sm text-ink-2">
+                      Checking your account...
+                    </div>
+                  ) : !hasRequesterProfile ? (
+                    <div className="mt-3 border border-surface-3 bg-surface-0 p-3 text-sm text-ink-2">
+                      Sign in with your profile to request a task.
+                    </div>
+                  ) : !hasRequesterAgent ? (
+                    <div className="mt-3 border border-surface-3 bg-surface-0 p-3 text-sm text-ink-2">
+                      Create at least one agent before sending requests.
+                    </div>
+                  ) : (
+                    <div className="mt-3 space-y-3">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="text-xs text-ink-2">
+                          <span className="mb-1 block">Your agent</span>
+                          <select
+                            value={requestAgentId ?? ""}
+                            onChange={(event) => setRequestAgentId(event.target.value as Id<"agents">)}
+                            className="w-full border border-surface-3 bg-surface-0 px-3 py-2 text-sm text-ink-1"
+                          >
+                            {requesterAgents?.map((agent) => (
+                              <option key={agent._id} value={agent._id}>
+                                {agent.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="text-xs text-ink-2">
+                          <span className="mb-1 block">Target public agent</span>
+                          <select
+                            value={targetAgentId ?? ""}
+                            onChange={(event) => setTargetAgentId(event.target.value as Id<"agents">)}
+                            className="w-full border border-surface-3 bg-surface-0 px-3 py-2 text-sm text-ink-1"
+                          >
+                            {publicAgents?.map((agent) => (
+                              <option key={agent._id} value={agent._id}>
+                                {agent.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                      <label className="text-xs text-ink-2">
+                        <span className="mb-1 block">Task description</span>
+                        <textarea
+                          value={requestDescription}
+                          onChange={(event) => setRequestDescription(event.target.value)}
+                          className="min-h-24 w-full resize-y border border-surface-3 bg-surface-0 px-3 py-2 text-sm text-ink-1"
+                          placeholder="Describe what you want this agent to do"
+                          maxLength={800}
+                        />
+                      </label>
+                      <div className="flex items-center justify-between gap-2 text-xs text-ink-2">
+                        <span>{requestDescription.trim().length}/800</span>
+                        <button
+                          type="button"
+                          onClick={() => void handleRequestTask()}
+                          disabled={!canRequestTask}
+                          className="border border-surface-3 px-3 py-1.5 text-sm text-ink-1 hover:bg-surface-0 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {isSubmittingRequest ? "Sending..." : "Request task"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
 
           <div className="border border-surface-3 bg-surface-0 p-4 sm:p-6 lg:col-span-8">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="text-sm font-medium uppercase tracking-wide text-ink-2">Public connect options</h2>
-              {requestTargetAgent && (
-                <span className="border border-surface-3 px-2 py-1 text-xs text-ink-1">Target: {requestTargetAgent.name}</span>
-              )}
-            </div>
-
-            {privacy.showEndpoints && normalizedUsername && requestTargetAgent ? (
-              <div className="mt-3 space-y-3">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {buildConnectCards(normalizedUsername, requestTargetAgent, privacy).map((card) => (
-                    <a
-                      key={card.label}
-                      href={card.href}
-                      target={card.external ? "_blank" : undefined}
-                      rel={card.external ? "noreferrer" : undefined}
-                      className="flex items-center justify-between gap-3 border border-surface-3 bg-surface-0 px-3 py-3 text-sm hover:bg-surface-1"
-                    >
-                      <span className="text-ink-1">{card.label}</span>
-                      <span className="truncate font-mono text-xs text-ink-2">{card.value}</span>
-                    </a>
-                  ))}
-                </div>
-                <p className="text-xs text-ink-2">
-                  API and MCP routes require an API key with the right scope. Docs and sitemap routes are public.
-                </p>
-              </div>
-            ) : (
-              <div className="mt-3 border border-surface-3 bg-surface-1 p-4 text-sm text-ink-2">
-                Public endpoint sharing is disabled for this profile.
-              </div>
-            )}
-
-            <div className="mt-4 border border-surface-3 bg-surface-1 p-4">
-              <h3 className="text-sm font-medium text-ink-0">Request this agent to do a task</h3>
-              <p className="mt-1 text-sm text-ink-2">
-                Sends the task into the target agent board Inbox. You must have a profile and at least one agent.
-              </p>
-
-              {viewer === undefined ? (
-                <div className="mt-3 border border-surface-3 bg-surface-0 p-3 text-sm text-ink-2">
-                  Checking your account...
-                </div>
-              ) : !hasRequesterProfile ? (
-                <div className="mt-3 border border-surface-3 bg-surface-0 p-3 text-sm text-ink-2">
-                  Sign in with your profile to request a task.
-                </div>
-              ) : !hasRequesterAgent ? (
-                <div className="mt-3 border border-surface-3 bg-surface-0 p-3 text-sm text-ink-2">
-                  Create at least one agent before sending requests.
-                </div>
+            <h2 className="text-sm font-medium uppercase tracking-wide text-ink-2">Activity</h2>
+            <div className="mt-3 border border-surface-3 bg-surface-0">
+              {!privacy.showActivity ? (
+                <div className="p-4 text-sm text-ink-2">Public activity is hidden for this profile.</div>
+              ) : !feedItems || feedItems.length === 0 ? (
+                <div className="p-4 text-sm text-ink-2">No public activity yet.</div>
               ) : (
-                <div className="mt-3 space-y-3">
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="text-xs text-ink-2">
-                      <span className="mb-1 block">Your agent</span>
-                      <select
-                        value={requestAgentId ?? ""}
-                        onChange={(event) => setRequestAgentId(event.target.value as Id<"agents">)}
-                        className="w-full border border-surface-3 bg-surface-0 px-3 py-2 text-sm text-ink-1"
-                      >
-                        {requesterAgents?.map((agent) => (
-                          <option key={agent._id} value={agent._id}>
-                            {agent.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="text-xs text-ink-2">
-                      <span className="mb-1 block">Target public agent</span>
-                      <select
-                        value={targetAgentId ?? ""}
-                        onChange={(event) => setTargetAgentId(event.target.value as Id<"agents">)}
-                        className="w-full border border-surface-3 bg-surface-0 px-3 py-2 text-sm text-ink-1"
-                      >
-                        {publicAgents?.map((agent) => (
-                          <option key={agent._id} value={agent._id}>
-                            {agent.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                  <label className="text-xs text-ink-2">
-                    <span className="mb-1 block">Task description</span>
-                    <textarea
-                      value={requestDescription}
-                      onChange={(event) => setRequestDescription(event.target.value)}
-                      className="min-h-24 w-full resize-y border border-surface-3 bg-surface-0 px-3 py-2 text-sm text-ink-1"
-                      placeholder="Describe what you want this agent to do"
-                      maxLength={800}
+                <div>
+                  {feedItems.map((item) => (
+                    <FeedTimelineItem
+                      key={item._id}
+                      item={item}
+                      actorName={selectedAgent?.name || user.name || normalizedUsername || "Unknown"}
+                      actorUsername={normalizedUsername || "user"}
+                      actorImage={selectedAgent?.image ?? user.image}
                     />
-                  </label>
-                  <div className="flex items-center justify-between gap-2 text-xs text-ink-2">
-                    <span>{requestDescription.trim().length}/800</span>
-                    <button
-                      type="button"
-                      onClick={() => void handleRequestTask()}
-                      disabled={!canRequestTask}
-                      className="border border-surface-3 px-3 py-1.5 text-sm text-ink-1 hover:bg-surface-0 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {isSubmittingRequest ? "Sending..." : "Request task"}
-                    </button>
-                  </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -583,32 +571,44 @@ export function PublicUserProfilePage() {
           )}
         </section>
 
-        {privacy.showActivity && (
-          <section>
-            <h2 className="text-sm font-medium uppercase tracking-wide text-ink-2">Activity</h2>
-            <div className="mt-3 border border-surface-3 bg-surface-0">
-              {!feedItems || feedItems.length === 0 ? (
-                <div className="p-4 text-sm text-ink-2">No public activity yet.</div>
-              ) : (
-                <div>
-                  {feedItems.map((item) => (
-                    <FeedTimelineItem
-                      key={item._id}
-                      item={item}
-                      actorName={selectedAgent?.name || user.name || normalizedUsername || "Unknown"}
-                      actorUsername={normalizedUsername || "user"}
-                      actorImage={selectedAgent?.image ?? user.image}
-                    />
-                  ))}
-                </div>
-              )}
+        <section>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-sm font-medium uppercase tracking-wide text-ink-2">Public connect options</h2>
+            {requestTargetAgent && (
+              <span className="border border-surface-3 px-2 py-1 text-xs text-ink-1">Target: {requestTargetAgent.name}</span>
+            )}
+          </div>
+
+          {privacy.showEndpoints && normalizedUsername && requestTargetAgent ? (
+            <div className="mt-3 space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                {buildConnectCards(normalizedUsername, requestTargetAgent, privacy).map((card) => (
+                  <a
+                    key={card.label}
+                    href={card.href}
+                    target={card.external ? "_blank" : undefined}
+                    rel={card.external ? "noreferrer" : undefined}
+                    className="flex items-center justify-between gap-3 border border-surface-3 bg-surface-0 px-3 py-3 text-sm hover:bg-surface-1"
+                  >
+                    <span className="text-ink-1">{card.label}</span>
+                    <span className="truncate font-mono text-xs text-ink-2">{card.value}</span>
+                  </a>
+                ))}
+              </div>
+              <p className="text-xs text-ink-2">
+                API and MCP routes require an API key with the right scope. llms, docs, and sitemap routes are public. Use profile llms for aggregate discovery and agent llms for persona-specific integrations.
+              </p>
             </div>
-          </section>
-        )}
+          ) : (
+            <div className="mt-3 border border-surface-3 bg-surface-1 p-4 text-sm text-ink-2">
+              Public endpoint sharing is disabled for this profile.
+            </div>
+          )}
+        </section>
       </main>
 
       <footer className="border-t border-surface-3 py-8">
-        <div className="mx-auto max-w-5xl px-4 text-center text-xs text-ink-2 sm:px-6">Powered by HumanAgent</div>
+        <div className="mx-auto max-w-6xl px-4 text-center text-xs text-ink-2 sm:px-6">Powered by HumanAgent</div>
       </footer>
 
       {activeAgent && normalizedUsername && (
@@ -643,7 +643,7 @@ export function PublicUserProfilePage() {
               ))}
             </div>
             <p className="mt-3 text-xs text-ink-2">
-              API and MCP routes require an API key with the right scope. Docs and sitemap routes are public.
+              API and MCP routes require an API key with the right scope. llms, docs, and sitemap routes are public. Use profile llms for aggregate discovery and agent llms for persona-specific integrations.
             </p>
             {publicAgentPath && (
               <div className="mt-4 flex flex-wrap gap-2">
@@ -768,6 +768,26 @@ function buildConnectCards(username: string, agent: PublicAgentSummary, privacy:
     });
   }
   // Discovery docs endpoints
+  cards.push({
+    label: "Agent llms (persona)",
+    value: `humanai.gent/${username}/${agent.slug}/llms.txt`,
+    href: `/${username}/${agent.slug}/llms.txt`,
+  });
+  cards.push({
+    label: "Agent llms full (persona)",
+    value: `humanai.gent/${username}/${agent.slug}/llms-full.md`,
+    href: `/${username}/${agent.slug}/llms-full.md`,
+  });
+  cards.push({
+    label: "Profile llms (aggregate)",
+    value: `humanai.gent/${username}/llms.txt`,
+    href: `/${username}/llms.txt`,
+  });
+  cards.push({
+    label: "Profile llms full (aggregate)",
+    value: `humanai.gent/${username}/llms-full.md`,
+    href: `/${username}/llms-full.md`,
+  });
   cards.push({
     label: "API Docs",
     value: `humanai.gent/api/v1/agents/${username}/docs.md`,

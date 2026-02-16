@@ -14,6 +14,9 @@ Active development tasks and roadmap items.
 - [ ] mayke sure all in sync
 - [ ] npm run typecheck
 - [ ] add API key edit flow for route-group and agent restrictions (without rotation)
+- [ ] terms and privacy poliyc
+- [ ] agent reports to email from agentmail
+- [ ] reports, dasbhaord, and markdown and pdf reports on what the agent did and perfromance
 
 ## Up Next
 
@@ -53,6 +56,7 @@ Active development tasks and roadmap items.
 - [x] Add health check endpoint for monitoring
 
 ### Security
+
 - [x] Implement API key rotation
 - [x] Add audit log export functionality
 - [x] Build security alerts dashboard
@@ -65,6 +69,12 @@ Active development tasks and roadmap items.
 
 ## Completed
 
+- [x] Add board projects system end to end: schema (`boardProjects`, `tasks.projectId`), Convex project CRUD APIs, project-aware task create/update, and frontend API wiring
+- [x] Upgrade `BoardPage` with dual modes (Board + Projects), project create/grouping UX, project filters, project badges on task cards, and active board/project scope labels
+- [x] Fix `BoardPage` crash caused by conditional hook execution path in loading state
+- [x] Add dual llms discovery model with username aggregate files and per-agent files (`/:username/:slug/llms.txt`, `/:username/:slug/llms-full.md`) plus public route/UI wiring
+- [x] Standardize llms endpoint labeling across canonical cards/pages (`Profile llms (aggregate)` and `Agent llms (persona)` plus full variants)
+- [x] Add default-agent selector in `SettingsPage` using shared `agents.setDefault` flow, and align landing copy with default-route behavior
 - [x] Add 1:1 Agent Chat page (`/chat`) with per-agent conversations and chat-to-task creation flow (creates tasks directly in Board Inbox)
 - [x] Add "Create task" action on chat message bubbles so past messages can be sent to Board Inbox without copy/paste
 - [x] Add `Todo` board column to default workflow and backfill for existing users via `ensureDefaultColumns`

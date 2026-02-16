@@ -32,6 +32,79 @@ type ProviderType = (typeof LLM_PROVIDERS)[number]["id"] | "custom";
 
 const MAX_AGENT_PHOTO_SIZE_BYTES = 3 * 1024 * 1024;
 
+type ProviderModelReference = {
+  id: ProviderType;
+  name: string;
+  docsUrl: string;
+  examples: Array<string>;
+};
+
+type OpenRouterModel = {
+  id: string;
+  name?: string;
+  description?: string;
+};
+
+// Keep this map in sync with LLM_PROVIDERS when adding/removing providers.
+// Future update: if we add a backend proxy endpoint for model catalogs, switch docsUrl
+// and live-fetch code to use that endpoint to avoid browser CORS/rate-limit issues.
+const PROVIDER_MODEL_REFERENCES: Array<ProviderModelReference> = [
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    docsUrl: "https://openrouter.ai/models",
+    examples: ["anthropic/claude-sonnet-4", "openai/gpt-4o", "google/gemini-2.0-flash-001"],
+  },
+  {
+    id: "anthropic",
+    name: "Anthropic",
+    docsUrl: "https://docs.anthropic.com/en/docs/about-claude/models",
+    examples: ["claude-sonnet-4-20250514", "claude-3-7-sonnet-latest"],
+  },
+  {
+    id: "openai",
+    name: "OpenAI",
+    docsUrl: "https://platform.openai.com/docs/models",
+    examples: ["gpt-4o", "gpt-4.1-mini", "o3-mini"],
+  },
+  {
+    id: "deepseek",
+    name: "DeepSeek",
+    docsUrl: "https://api-docs.deepseek.com/quick_start/pricing",
+    examples: ["deepseek-chat", "deepseek-reasoner"],
+  },
+  {
+    id: "google",
+    name: "Google AI",
+    docsUrl: "https://ai.google.dev/gemini-api/docs/models",
+    examples: ["gemini-2.0-flash", "gemini-1.5-pro"],
+  },
+  {
+    id: "mistral",
+    name: "Mistral",
+    docsUrl: "https://docs.mistral.ai/getting-started/models/models_overview/",
+    examples: ["mistral-large-latest", "ministral-8b-latest"],
+  },
+  {
+    id: "minimax",
+    name: "MiniMax",
+    docsUrl: "https://www.minimaxi.com/platform",
+    examples: ["abab6.5s-chat"],
+  },
+  {
+    id: "kimi",
+    name: "Kimi (Moonshot)",
+    docsUrl: "https://platform.moonshot.ai/docs/guide/start-using-kimi-api",
+    examples: ["kimi-k2-0711-preview"],
+  },
+  {
+    id: "xai",
+    name: "xAI (Grok)",
+    docsUrl: "https://docs.x.ai/docs/models",
+    examples: ["grok-2-1212", "grok-beta"],
+  },
+] as const;
+
 const AGENT_ICON_OPTIONS: Array<{
   id: string;
   label: string;
@@ -115,6 +188,10 @@ export function AgentsPage() {
   const [editXCanMonitor, setEditXCanMonitor] = useState(true);
   const [editXAutoPostEnabled, setEditXAutoPostEnabled] = useState(false);
   const [editXAutoPostRequireApproval, setEditXAutoPostRequireApproval] = useState(true);
+  const [showModelHelpModal, setShowModelHelpModal] = useState(false);
+  const [openRouterModels, setOpenRouterModels] = useState<Array<OpenRouterModel>>([]);
+  const [isLoadingOpenRouterModels, setIsLoadingOpenRouterModels] = useState(false);
+  const [openRouterModelLoadError, setOpenRouterModelLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [photoUploading, setPhotoUploading] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
@@ -439,6 +516,31 @@ export function AgentsPage() {
       notify.success("Default agent updated");
     } catch (error) {
       notify.error("Could not set default agent", error);
+    }
+  }
+
+  async function openModelHelpModal() {
+    setShowModelHelpModal(true);
+
+    // Keep the first successful response in memory for this page session.
+    if (openRouterModels.length > 0 || isLoadingOpenRouterModels) return;
+
+    setIsLoadingOpenRouterModels(true);
+    setOpenRouterModelLoadError(null);
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/models");
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const payload = (await response.json()) as { data?: Array<OpenRouterModel> };
+      setOpenRouterModels(payload.data ?? []);
+    } catch (error) {
+      console.error("Failed to load OpenRouter model catalog:", error);
+      setOpenRouterModelLoadError(
+        "Could not load live model catalog right now. Use provider docs links below."
+      );
+    } finally {
+      setIsLoadingOpenRouterModels(false);
     }
   }
 
@@ -788,7 +890,16 @@ export function AgentsPage() {
                           </select>
                         </div>
                         <div>
-                          <label className="block text-sm text-ink-1">Model</label>
+                          <div className="flex items-center justify-between">
+                            <label className="block text-sm text-ink-1">Model</label>
+                            <button
+                              type="button"
+                              onClick={() => void openModelHelpModal()}
+                              className="text-xs text-accent hover:underline"
+                            >
+                              Model help
+                            </button>
+                          </div>
                           <input
                             type="text"
                             value={editModel}
@@ -1386,6 +1497,120 @@ export function AgentsPage() {
             </p>
           </div>
         </div>
+
+        {showModelHelpModal && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+            onClick={() => setShowModelHelpModal(false)}
+          >
+            <div
+              className="mx-4 w-full max-w-3xl max-h-[85vh] animate-fade-in card overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-3 border-b border-surface-3 pb-3">
+                <div>
+                  <h3 className="font-semibold text-ink-0">Model name lookup</h3>
+                  <p className="mt-1 text-xs text-ink-2">
+                    Use provider docs for exact model IDs. Live OpenRouter list helps with cross-provider discovery.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowModelHelpModal(false)}
+                  className="rounded p-1 text-ink-2 hover:bg-surface-2"
+                  aria-label="Close model help"
+                >
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-4 overflow-y-auto pr-1">
+                <div className="rounded-lg border border-surface-3 bg-surface-1 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-sm font-medium text-ink-0">Provider model docs</h4>
+                    <p className="text-xs text-ink-2">
+                      Current provider:{" "}
+                      {LLM_PROVIDERS.find((provider) => provider.id === editProvider)?.name ?? editProvider}
+                    </p>
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {PROVIDER_MODEL_REFERENCES.map((reference) => {
+                      const isCurrentProvider = reference.id === editProvider;
+                      return (
+                        <a
+                          key={reference.id}
+                          href={reference.docsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`rounded-lg border p-3 transition-colors ${
+                            isCurrentProvider
+                              ? "border-accent bg-accent/10"
+                              : "border-surface-3 bg-surface-0 hover:bg-surface-2"
+                          }`}
+                        >
+                          <p className="text-sm font-medium text-ink-0">{reference.name}</p>
+                          <p className="mt-1 text-xs text-ink-2 truncate">{reference.examples.join(" · ")}</p>
+                        </a>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-surface-3 bg-surface-1 p-4">
+                  <h4 className="text-sm font-medium text-ink-0">Live catalog (OpenRouter)</h4>
+                  <p className="mt-1 text-xs text-ink-2">
+                    Auto-updated list from OpenRouter. Good for discovery across providers.
+                  </p>
+                  {isLoadingOpenRouterModels ? (
+                    <div className="mt-3 flex items-center gap-2 text-xs text-ink-2">
+                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-surface-3 border-t-accent" />
+                      Loading model catalog...
+                    </div>
+                  ) : openRouterModelLoadError ? (
+                    <p className="mt-3 text-xs text-amber-500">{openRouterModelLoadError}</p>
+                  ) : openRouterModels.length > 0 ? (
+                    <div className="mt-3 max-h-56 overflow-y-auto rounded border border-surface-3">
+                      {openRouterModels.slice(0, 80).map((model) => (
+                        <button
+                          key={model.id}
+                          type="button"
+                          onClick={() => {
+                            setEditModel(model.id);
+                            setShowModelHelpModal(false);
+                          }}
+                          className="flex w-full items-start justify-between gap-3 border-b border-surface-3 px-3 py-2 text-left last:border-b-0 hover:bg-surface-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm text-ink-0">{model.id}</p>
+                            {model.name ? <p className="mt-0.5 truncate text-xs text-ink-2">{model.name}</p> : null}
+                          </div>
+                          <span className="text-xs text-accent">Use</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-xs text-ink-2">No live models returned right now.</p>
+                  )}
+                  <p className="mt-2 text-xs text-ink-2">
+                    Tip: if your provider uses OpenAI-compatible endpoints, model IDs like `glm-5` can work directly.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 flex justify-end border-t border-surface-3 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setShowModelHelpModal(false)}
+                  className="btn-secondary text-sm"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );

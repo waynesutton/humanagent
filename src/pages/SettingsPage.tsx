@@ -34,6 +34,7 @@ type AgentOption = {
   _id: Id<"agents">;
   name: string;
   slug: string;
+  isDefault?: boolean;
 };
 
 const KEY_SCOPE_OPTIONS = [
@@ -95,6 +96,7 @@ export function SettingsPage() {
   const rotateApiKey = useMutation(platformApi.convex.settings.rotateApiKey);
   const saveCredential = useMutation(platformApi.convex.settings.saveCredential);
   const removeCredential = useMutation(platformApi.convex.settings.removeCredential);
+  const setDefaultAgent = useMutation(platformApi.convex.agents.setDefault);
   const auth = getAuth();
 
   const [username, setUsername] = useState("");
@@ -158,6 +160,10 @@ export function SettingsPage() {
   >([]);
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [creatingKey, setCreatingKey] = useState(false);
+  const [selectedDefaultAgentId, setSelectedDefaultAgentId] = useState<Id<"agents"> | null>(
+    null
+  );
+  const [updatingDefaultAgent, setUpdatingDefaultAgent] = useState(false);
 
   useEffect(() => {
     if (viewer) {
@@ -215,6 +221,17 @@ export function SettingsPage() {
       setThemeMode(currentTheme);
     }
   }, []);
+
+  useEffect(() => {
+    if (!myAgents || myAgents.length === 0) {
+      setSelectedDefaultAgentId(null);
+      return;
+    }
+    setSelectedDefaultAgentId((prev) => {
+      if (prev && myAgents.some((agent) => agent._id === prev)) return prev;
+      return myAgents.find((agent) => agent.isDefault)?._id ?? myAgents[0]!._id;
+    });
+  }, [myAgents]);
 
   async function handleSaveProfile() {
     setSaveError(null);
@@ -475,6 +492,19 @@ export function SettingsPage() {
         ? Array.from(new Set([...current, agentId]))
         : current.filter((id) => id !== agentId)
     );
+  }
+
+  async function handleSetDefaultAgentFromSettings() {
+    if (!selectedDefaultAgentId) return;
+    setUpdatingDefaultAgent(true);
+    try {
+      await setDefaultAgent({ agentId: selectedDefaultAgentId });
+      notify.success("Default agent updated");
+    } catch (error) {
+      notify.error("Could not set default agent", error);
+    } finally {
+      setUpdatingDefaultAgent(false);
+    }
   }
 
   async function handleDeleteAccount() {
@@ -1929,6 +1959,49 @@ export function SettingsPage() {
             <div className="mt-4 flex items-center gap-2 rounded-lg border border-surface-3 bg-surface-1 px-3 py-2">
               <span className="status-online" />
               <span className="text-sm text-ink-0">Online</span>
+            </div>
+            <div className="mt-4 rounded-lg border border-surface-3 bg-surface-1 p-3">
+              <p className="text-sm font-medium text-ink-0">Default agent</p>
+              <p className="mt-1 text-xs text-ink-2">
+                Used when API or MCP calls use your username without an agent slug.
+              </p>
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <select
+                  className="input sm:max-w-sm"
+                  value={selectedDefaultAgentId ?? ""}
+                  onChange={(e) =>
+                    setSelectedDefaultAgentId(
+                      e.target.value ? (e.target.value as Id<"agents">) : null
+                    )
+                  }
+                  disabled={myAgents === undefined || myAgents.length === 0 || updatingDefaultAgent}
+                >
+                  {myAgents === undefined ? (
+                    <option value="">Loading agents...</option>
+                  ) : myAgents.length === 0 ? (
+                    <option value="">No agents found</option>
+                  ) : (
+                    myAgents.map((agent) => (
+                      <option key={agent._id} value={agent._id}>
+                        {agent.name} ({agent.slug}){agent.isDefault ? " - current default" : ""}
+                      </option>
+                    ))
+                  )}
+                </select>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={handleSetDefaultAgentFromSettings}
+                  disabled={
+                    !selectedDefaultAgentId ||
+                    myAgents === undefined ||
+                    myAgents.length === 0 ||
+                    updatingDefaultAgent
+                  }
+                >
+                  {updatingDefaultAgent ? "Saving..." : "Set default"}
+                </button>
+              </div>
             </div>
           </section>
 
