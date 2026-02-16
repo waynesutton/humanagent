@@ -17,6 +17,22 @@ const cors = corsRouter(http, {
   allowCredentials: false,
 });
 
+// Basic service health check endpoint for external monitoring.
+http.route({
+  path: "/health",
+  method: "GET",
+  handler: httpAction(async () => {
+    return new Response(
+      JSON.stringify({
+        status: "ok",
+        service: "humanagent",
+        timestamp: Date.now(),
+      }),
+      { headers: { "Content-Type": "application/json" } }
+    );
+  }),
+});
+
 // ============================================================
 // Public API: send message to an agent
 // ============================================================
@@ -332,7 +348,8 @@ http.route({
 
     try {
       const event = JSON.parse(body) as {
-        type: string;
+        type?: string;
+        event_type?: string;
         to?: string;
         from?: string;
         subject?: string;
@@ -340,85 +357,271 @@ http.route({
         html?: string;
         messageId?: string;
         threadId?: string;
+        message?: {
+          inbox_id?: string;
+          thread_id?: string;
+          message_id?: string;
+          from?: Array<{ email?: string; name?: string }>;
+          to?: Array<{ email?: string; name?: string }>;
+          subject?: string;
+          text?: string;
+          html?: string;
+          timestamp?: string;
+        };
+        send?: {
+          inbox_id?: string;
+          thread_id?: string;
+          message_id?: string;
+          timestamp?: string;
+          recipients?: Array<string>;
+        };
+        delivery?: {
+          inbox_id?: string;
+          thread_id?: string;
+          message_id?: string;
+          timestamp?: string;
+          recipients?: Array<string>;
+        };
+        bounce?: {
+          inbox_id?: string;
+          thread_id?: string;
+          message_id?: string;
+          timestamp?: string;
+          type?: string;
+          sub_type?: string;
+          recipients?: Array<{ address?: string; status?: string }>;
+        };
       };
+      const eventType = (event.event_type ?? event.type ?? "").trim();
 
-      const recipientEmail = normalizeEmailAddress(event.to);
-      if (!recipientEmail) {
-        return new Response("Invalid recipient", { status: 400 });
-      }
-
-      // Resolve by agent email first, then fallback to username local-part.
-      const agent = await ctx.runQuery(internal.functions.agents.getByEmail, {
-        email: recipientEmail,
-      });
-
-      let userId: Id<"users">;
-      let agentId: Id<"agents"> | undefined;
-      if (agent) {
-        userId = agent.userId;
-        agentId = agent._id;
-      } else {
-        const toUsername = extractLocalPart(recipientEmail);
-        if (!toUsername) {
+      if (eventType === "message.received") {
+        const recipientEmail = normalizeEmailAddress(
+          event.message?.to?.[0]?.email ?? event.to
+        );
+        if (!recipientEmail) {
           return new Response("Invalid recipient", { status: 400 });
         }
-        const user = await ctx.runQuery(api.functions.users.getByUsername, {
-          username: toUsername,
+
+        // Resolve by agent email first, then fallback to username local-part.
+        const agent = await ctx.runQuery(internal.functions.agents.getByEmail, {
+          email: recipientEmail,
         });
-        if (!user) {
-          return new Response("Agent not found", { status: 404 });
+
+        let userId: Id<"users">;
+        let agentId: Id<"agents"> | undefined;
+        if (agent) {
+          userId = agent.userId;
+          agentId = agent._id;
+        } else {
+          const toUsername = extractLocalPart(recipientEmail);
+          if (!toUsername) {
+            return new Response("Invalid recipient", { status: 400 });
+          }
+          const user = await ctx.runQuery(api.functions.users.getByUsername, {
+            username: toUsername,
+          });
+          if (!user) {
+            return new Response("Agent not found", { status: 404 });
+          }
+          userId = user._id;
         }
-        userId = user._id;
-      }
 
-      const from = (event.from ?? "").trim();
-      const subject = (event.subject ?? "").trim();
-      const inboundText = (event.text ?? "").trim();
-      const inboundBody = inboundText || (event.html ?? "").trim();
-      if (!from || !inboundBody) {
-        return new Response("Invalid payload", { status: 400 });
-      }
+        const from = (
+          event.message?.from?.[0]?.email ??
+          event.from ??
+          ""
+        ).trim();
+        const subject = (event.message?.subject ?? event.subject ?? "").trim();
+        const inboundText = (event.message?.text ?? event.text ?? "").trim();
+        const inboundBody = inboundText || (event.message?.html ?? event.html ?? "").trim();
+        if (!from || !inboundBody) {
+          return new Response("Invalid payload", { status: 400 });
+        }
 
-      const externalId = event.threadId ?? event.messageId ?? from;
-      const inboundMessage = `Email from ${from}\nSubject: ${subject || "(no subject)"}\n\n${inboundBody}`;
+        const inboundThreadId = event.message?.thread_id ?? event.threadId;
+        const inboundMessageId = event.message?.message_id ?? event.messageId;
+        const inboundInboxId = event.message?.inbox_id;
+        const externalId = inboundThreadId ?? inboundMessageId ?? from;
+        const emailChannelMetadata = {
+          email: {
+            from,
+            inboxAddress: recipientEmail,
+            inboxId: inboundInboxId,
+            subject: subject || undefined,
+            threadId: inboundThreadId,
+            lastMessageId: inboundMessageId,
+            deliveryStatus: "received" as const,
+            lastEventType: "message.received",
+            lastEventAt: parseEventTimestampMs(event.message?.timestamp),
+          },
+        };
+        const inboundMessage = `Email from ${from}\nSubject: ${subject || "(no subject)"}\n\n${inboundBody}`;
 
-      const conversationId = await ctx.runMutation(internal.functions.conversations.create, {
-        userId,
-        channel: "email",
-        externalId,
-        initialMessage: inboundMessage,
-      });
+        const conversationId = await ctx.runMutation(
+          internal.functions.conversations.create,
+          {
+            userId,
+            channel: "email",
+            externalId,
+            initialMessage: inboundMessage,
+            channelMetadata: emailChannelMetadata,
+          }
+        );
 
-      // Process the email as an inbound message
-      const result = await ctx.runAction(internal.agent.runtime.processMessage, {
-        userId,
-        agentId,
-        message: inboundMessage,
-        channel: "email",
-        callerId: from,
-      });
-
-      await ctx.runMutation(internal.functions.conversations.addAgentResponse, {
-        conversationId,
-        content: result.response,
-      });
-
-      await ctx.runMutation(internal.functions.feed.maybeCreateItem, {
-        userId,
-        type: "message_handled",
-        title: "Email received",
-        content: subject ? `From ${from}: ${subject}` : `From ${from}`,
-        metadata: {
+        // Process the email as an inbound message
+        const result = await ctx.runAction(internal.agent.runtime.processMessage, {
+          userId,
+          agentId,
+          message: inboundMessage,
           channel: "email",
-          blocked: result.blocked,
-          externalId,
-        },
-        isPublic: false,
-      });
+          callerId: from,
+        });
 
-      return new Response("OK", { status: 200 });
-    } catch {
-      return new Response("Processing error", { status: 500 });
+        await ctx.runMutation(internal.functions.conversations.addAgentResponse, {
+          conversationId,
+          content: result.response,
+        });
+
+        let outboundSent = false;
+        let outboundError: string | undefined;
+        if (inboundMessageId) {
+          const agentmailReply = (internal as Record<string, any>)["functions/agentmail"]
+            .replyToMessage;
+          const sendResult = await ctx.runAction(
+            agentmailReply,
+            {
+              userId,
+              inboxAddress: recipientEmail,
+              messageId: inboundMessageId,
+              text: result.response,
+            }
+          );
+          outboundSent = sendResult.sent;
+          outboundError = sendResult.error;
+
+          await ctx.runMutation(internal.functions.conversations.updateEmailChannelMetadata, {
+            conversationId,
+            inboxAddress: recipientEmail,
+            inboxId: inboundInboxId,
+            from,
+            subject: subject || undefined,
+            threadId: sendResult.threadId ?? inboundThreadId,
+            lastMessageId: sendResult.messageId ?? inboundMessageId,
+            deliveryStatus: sendResult.sent ? "sent" : "received",
+            lastEventType: sendResult.sent
+              ? "message.sent"
+              : "message.received",
+            lastEventAt: Date.now(),
+          });
+        } else {
+          outboundError = "Inbound event missing messageId; outbound reply skipped.";
+        }
+
+        await ctx.runMutation(internal.functions.feed.maybeCreateItem, {
+          userId,
+          type: "message_handled",
+          title: "Email received",
+          content: subject ? `From ${from}: ${subject}` : `From ${from}`,
+          metadata: {
+            channel: "email",
+            blocked: result.blocked,
+            externalId,
+            outboundSent,
+            outboundError,
+          },
+          isPublic: false,
+        });
+
+        return new Response("OK", { status: 200 });
+      }
+
+      if (
+        eventType === "message.sent" ||
+        eventType === "message.delivered" ||
+        eventType === "message.bounced"
+      ) {
+        const details =
+          eventType === "message.sent"
+            ? event.send
+            : eventType === "message.delivered"
+              ? event.delivery
+              : event.bounce;
+        const threadId = details?.thread_id;
+        const messageId = details?.message_id;
+        if (!threadId) {
+          return new Response("Ignored event without thread", { status: 200 });
+        }
+
+        const conversation = await ctx.runQuery(
+          internal.functions.conversations.getByChannelAndExternalId,
+          {
+            channel: "email",
+            externalId: threadId,
+          }
+        );
+        if (!conversation) {
+          return new Response("No matching conversation", { status: 200 });
+        }
+
+        const recipients = extractEventRecipients(eventType, event);
+        const deliveryStatus =
+          eventType === "message.bounced"
+            ? "bounced"
+            : eventType === "message.delivered"
+              ? "delivered"
+              : "sent";
+        const status = eventType === "message.bounced" ? "escalated" : undefined;
+
+        await ctx.runMutation(internal.functions.conversations.updateEmailChannelMetadata, {
+          conversationId: conversation._id,
+          inboxId: details?.inbox_id,
+          threadId,
+          lastMessageId: messageId,
+          deliveryStatus,
+          lastEventType: eventType,
+          lastEventAt: parseEventTimestampMs(details?.timestamp),
+          lastRecipients: recipients,
+          lastBounceType: event.bounce?.type,
+          lastBounceSubType: event.bounce?.sub_type,
+          status,
+        });
+
+        await ctx.runMutation(internal.functions.feed.maybeCreateItem, {
+          userId: conversation.userId,
+          type: "integration_action",
+          title:
+            eventType === "message.sent"
+              ? "Email sent"
+              : eventType === "message.delivered"
+                ? "Email delivered"
+                : "Email bounced",
+          content:
+            recipients.length > 0
+              ? `Recipients: ${recipients.join(", ")}`
+              : undefined,
+          metadata: {
+            channel: "email",
+            eventType,
+            threadId,
+            messageId,
+            recipients,
+            bounceType: event.bounce?.type,
+            bounceSubType: event.bounce?.sub_type,
+          },
+          isPublic: false,
+        });
+
+        return new Response("OK", { status: 200 });
+      }
+
+      return new Response("Ignored event type", { status: 200 });
+    } catch (error) {
+      await ctx.runMutation(internal.functions.webhooks.enqueueAgentmailRetry, {
+        payload: body,
+        lastError:
+          error instanceof Error ? error.message : "AgentMail webhook processing failed.",
+      });
+      return new Response("Queued for retry", { status: 202 });
     }
   }),
 });
@@ -1496,6 +1699,34 @@ function extractLocalPart(email: string): string {
   const atIndex = email.indexOf("@");
   if (atIndex <= 0) return "";
   return email.slice(0, atIndex).trim().toLowerCase();
+}
+
+function parseEventTimestampMs(value?: string): number {
+  if (!value) return Date.now();
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? Date.now() : parsed;
+}
+
+function extractEventRecipients(
+  eventType: string,
+  event: {
+    send?: { recipients?: Array<string> };
+    delivery?: { recipients?: Array<string> };
+    bounce?: { recipients?: Array<{ address?: string; status?: string }> };
+  }
+): Array<string> {
+  if (eventType === "message.sent") {
+    return (event.send?.recipients ?? []).filter(Boolean);
+  }
+  if (eventType === "message.delivered") {
+    return (event.delivery?.recipients ?? []).filter(Boolean);
+  }
+  if (eventType === "message.bounced") {
+    return (event.bounce?.recipients ?? [])
+      .map((recipient) => recipient.address ?? "")
+      .filter(Boolean);
+  }
+  return [];
 }
 
 function escapeXml(text: string): string {

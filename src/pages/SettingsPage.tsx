@@ -4,12 +4,15 @@ import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
 import { getAuth } from "../lib/auth";
+import { notify } from "../lib/notify";
+import { applyTheme, type ThemeMode } from "../lib/theme";
 
 // LLM provider configuration
 const LLM_PROVIDERS = [
   { id: "openrouter", name: "OpenRouter", description: "Access 400+ models with one API key" },
   { id: "anthropic", name: "Anthropic", description: "Claude models directly" },
   { id: "openai", name: "OpenAI", description: "GPT-4o, GPT-4 Turbo, etc." },
+  { id: "deepseek", name: "DeepSeek", description: "DeepSeek chat and reasoning models via BYOK" },
   { id: "google", name: "Google AI", description: "Gemini models" },
   { id: "mistral", name: "Mistral", description: "Mistral models" },
   { id: "minimax", name: "MiniMax", description: "MiniMax open-source and reasoning models" },
@@ -59,12 +62,17 @@ export function SettingsPage() {
     | CredentialRow[]
     | undefined;
   const llmProviderStatus = useQuery(api.functions.credentials.getLLMProviderStatus);
+  const isAdmin = useQuery(api.functions.admin.isAdmin);
+  const securityEvents = useQuery(api.functions.auditLog.getSecurityEvents);
+  const securityCsv = useQuery(api.functions.auditLog.exportCsv, { limit: 1000 });
+  const rateLimitDashboard = useQuery(api.functions.rateLimits.getDashboard);
   const updateSettings = useMutation(api.functions.users.updateSettings);
   const deleteAccount = useMutation(api.functions.users.deleteAccount);
   const generateProfilePhotoUploadUrl = useMutation(api.functions.users.generateProfilePhotoUploadUrl);
   const setProfilePhoto = useMutation(api.functions.users.setProfilePhoto);
   const createApiKey = useMutation(api.functions.apiKeys.create);
   const revokeApiKey = useMutation(api.functions.apiKeys.revoke);
+  const rotateApiKey = useMutation(api.functions.apiKeys.rotate);
   const saveCredential = useMutation(api.functions.credentials.saveApiKey);
   const removeCredential = useMutation(api.functions.credentials.remove);
   const auth = getAuth();
@@ -101,6 +109,8 @@ export function SettingsPage() {
   const [byokApiKey, setByokApiKey] = useState("");
   const [byokBaseUrl, setByokBaseUrl] = useState("");
   const [savingByok, setSavingByok] = useState(false);
+  const [themeMode, setThemeMode] = useState<ThemeMode>("light");
+  const [securityTab, setSecurityTab] = useState<"alerts" | "rate_limits">("alerts");
 
   // New API key form
   const [showNewKey, setShowNewKey] = useState(false);
@@ -142,6 +152,13 @@ export function SettingsPage() {
     }
   }, [viewer]);
 
+  useEffect(() => {
+    const currentTheme = document.documentElement.getAttribute("data-theme");
+    if (currentTheme === "dark" || currentTheme === "light") {
+      setThemeMode(currentTheme);
+    }
+  }, []);
+
   async function handleSaveProfile() {
     setSaveError(null);
     setSaving(true);
@@ -155,7 +172,7 @@ export function SettingsPage() {
           linkedin: linkedinProfile.trim() || undefined,
           github: githubProfile.trim() || undefined,
         },
-        llmProvider: llmProvider as "openrouter" | "anthropic" | "openai" | "google" | "mistral" | "minimax" | "kimi" | "xai" | "custom",
+        llmProvider: llmProvider as "openrouter" | "anthropic" | "openai" | "deepseek" | "google" | "mistral" | "minimax" | "kimi" | "xai" | "custom",
         llmModel,
         privacySettings: {
           profileVisible: privacyProfileVisible,
@@ -194,9 +211,11 @@ export function SettingsPage() {
       }
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+      notify.success("Settings saved");
     } catch (error) {
       console.error("Failed to save settings:", error);
       setSaveError(error instanceof Error ? error.message : "Could not save settings.");
+      notify.error("Could not save settings", error);
     } finally {
       setSaving(false);
     }
@@ -210,13 +229,17 @@ export function SettingsPage() {
     setPhotoError(null);
 
     if (!file.type.startsWith("image/")) {
-      setPhotoError("Please select an image file.");
+      const message = "Please select an image file.";
+      setPhotoError(message);
+      notify.warning("Invalid file", message);
       input.value = "";
       return;
     }
 
     if (file.size > 5 * 1024 * 1024) {
-      setPhotoError("Image must be 5MB or smaller.");
+      const message = "Image must be 5MB or smaller.";
+      setPhotoError(message);
+      notify.warning("Image too large", message);
       input.value = "";
       return;
     }
@@ -247,9 +270,11 @@ export function SettingsPage() {
 
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+      notify.success("Profile photo updated");
     } catch (error) {
       console.error("Failed to upload profile photo:", error);
       setPhotoError("Could not upload photo. Please try again.");
+      notify.error("Could not upload photo", error);
     } finally {
       setPhotoUploading(false);
       input.value = "";
@@ -269,6 +294,9 @@ export function SettingsPage() {
       setShowByokForm(null);
       setByokApiKey("");
       setByokBaseUrl("");
+      notify.success("Credential saved");
+    } catch (error) {
+      notify.error("Could not save credential", error);
     } finally {
       setSavingByok(false);
     }
@@ -276,7 +304,12 @@ export function SettingsPage() {
 
   // Remove BYOK credential
   async function handleRemoveCredential(service: string) {
-    await removeCredential({ service: service as ProviderType | IntegrationService });
+    try {
+      await removeCredential({ service: service as ProviderType | IntegrationService });
+      notify.success("Credential removed");
+    } catch (error) {
+      notify.error("Could not remove credential", error);
+    }
   }
 
   async function handleCreateKey(e: React.FormEvent) {
@@ -292,18 +325,53 @@ export function SettingsPage() {
       setCreatedKey(result.key);
       setNewKeyName("");
       setNewKeyScopes(["read"]);
+      notify.success("API key created", "Copy your new key now.");
+    } catch (error) {
+      notify.error("Could not create API key", error);
     } finally {
       setCreatingKey(false);
     }
   }
 
   async function handleRevokeKey(keyId: Id<"apiKeys">) {
-    if (!confirm("Revoke this API key? This cannot be undone.")) return;
-    await revokeApiKey({ keyId });
+    notify.confirmAction({
+      title: "Revoke this API key?",
+      description: "This cannot be undone.",
+      buttonTitle: "Revoke",
+      onConfirm: async () => {
+        try {
+          await revokeApiKey({ keyId });
+          notify.success("API key revoked");
+        } catch (error) {
+          notify.error("Could not revoke API key", error);
+        }
+      },
+    });
+  }
+
+  async function handleRotateKey(keyId: Id<"apiKeys">) {
+    notify.confirmAction({
+      title: "Rotate this API key?",
+      description: "A new key will be created and the current key will be revoked.",
+      buttonTitle: "Rotate",
+      onConfirm: async () => {
+        try {
+          const result = await rotateApiKey({ keyId });
+          setCreatedKey(result.key);
+          setShowNewKey(false);
+          notify.success("API key rotated", "Copy your new key now.");
+        } catch (error) {
+          notify.error("Could not rotate API key", error);
+        }
+      },
+    });
   }
 
   function copyToClipboard(text: string) {
-    navigator.clipboard.writeText(text);
+    void navigator.clipboard
+      .writeText(text)
+      .then(() => notify.success("Copied to clipboard"))
+      .catch((error: unknown) => notify.error("Could not copy", error));
   }
 
   async function handleDeleteAccount() {
@@ -314,11 +382,32 @@ export function SettingsPage() {
     try {
       await deleteAccount({});
       await auth.signOut();
+      notify.success("Account deleted");
     } catch (error) {
       console.error("Failed to delete account:", error);
       setDeleteAccountError("Could not delete account. Please try again.");
       setDeletingAccount(false);
+      notify.error("Could not delete account", error);
     }
+  }
+
+  function handleThemeToggle(nextTheme: ThemeMode) {
+    setThemeMode(nextTheme);
+    applyTheme(nextTheme);
+    notify.success(`Theme set to ${nextTheme}`);
+  }
+
+  function handleDownloadSecurityCsv() {
+    if (!securityCsv) return;
+    const blob = new Blob([securityCsv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `security-audit-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   if (!viewer) {
@@ -335,11 +424,18 @@ export function SettingsPage() {
     <DashboardLayout>
       <div className="mx-auto max-w-3xl animate-fade-in">
         {/* Header */}
-        <div>
-          <h1 className="text-2xl font-semibold text-ink-0">Settings</h1>
-          <p className="mt-1 text-ink-1">
-            Manage your profile, LLM configuration, and API keys.
-          </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold text-ink-0">Settings</h1>
+            <p className="mt-1 text-ink-1">
+              Manage your profile, LLM configuration, and API keys.
+            </p>
+          </div>
+          {isAdmin ? (
+            <span className="rounded-full border border-surface-3 bg-surface-1 px-3 py-1 text-xs font-medium text-ink-0">
+              You are admin
+            </span>
+          ) : null}
         </div>
 
         <div className="mt-8 space-y-8">
@@ -504,6 +600,31 @@ export function SettingsPage() {
                   )}
                 </button>
               </div>
+            </div>
+          </section>
+
+          <section className="card">
+            <h2 className="font-semibold text-ink-0">Appearance</h2>
+            <p className="mt-1 text-sm text-ink-1">
+              Switch between light and dark mode for the dashboard.
+            </p>
+            <div className="mt-5 flex items-center gap-2">
+              <button
+                onClick={() => handleThemeToggle("light")}
+                className={`btn-secondary text-sm ${
+                  themeMode === "light" ? "border-accent text-ink-0" : ""
+                }`}
+              >
+                Light
+              </button>
+              <button
+                onClick={() => handleThemeToggle("dark")}
+                className={`btn-secondary text-sm ${
+                  themeMode === "dark" ? "border-accent text-ink-0" : ""
+                }`}
+              >
+                Dark
+              </button>
             </div>
           </section>
 
@@ -673,19 +794,39 @@ export function SettingsPage() {
                   value={llmModel}
                   onChange={(e) => setLlmModel(e.target.value)}
                   className="input mt-1.5"
-                  placeholder="anthropic/claude-sonnet-4"
+                  placeholder="gpt-4o or glm-5"
                 />
                 <p className="mt-1 text-xs text-ink-2">
                   {llmProvider === "openrouter" && "Browse models at openrouter.ai/models"}
                   {llmProvider === "anthropic" && "e.g., claude-sonnet-4, claude-opus-4"}
-                  {llmProvider === "openai" && "e.g., gpt-4o, gpt-4-turbo"}
+                  {llmProvider === "openai" && "e.g., gpt-4o, gpt-4-turbo, glm-5 (with z.ai OpenAI-compatible base URL)"}
+                  {llmProvider === "deepseek" && "e.g., deepseek-chat, deepseek-reasoner"}
                   {llmProvider === "google" && "e.g., gemini-2.0-flash, gemini-1.5-pro"}
                   {llmProvider === "mistral" && "e.g., mistral-large, mistral-medium"}
                   {llmProvider === "minimax" && "e.g., minimax-m1, minimax-text-01"}
                   {llmProvider === "kimi" && "e.g., kimi-k2-0711-preview, moonshot-v1-8k"}
                   {llmProvider === "xai" && "e.g., grok-2-1212"}
-                  {llmProvider === "custom" && "Enter your model identifier"}
+                  {llmProvider === "custom" && "Enter your model identifier (e.g., glm-5)"}
                 </p>
+                {llmProvider === "openai" && (
+                  <p className="mt-1 text-xs text-ink-2">
+                    For z.ai, set your API key in BYOK and optionally set custom base URL in BYOK config.
+                    {" "}
+                    <a
+                      href="https://docs.z.ai/devpack/faq"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-accent hover:underline"
+                    >
+                      Setup reference
+                    </a>
+                  </p>
+                )}
+                {llmProvider === "deepseek" && (
+                  <p className="mt-1 text-xs text-ink-2">
+                    DeepSeek uses BYOK. Default API base URL is <code className="bg-surface-1 px-1 rounded">https://api.deepseek.com/v1</code>. Override base URL only if needed.
+                  </p>
+                )}
               </div>
 
               {/* Token usage */}
@@ -829,6 +970,16 @@ export function SettingsPage() {
                               <p className="text-xs text-ink-2">
                                 Get your key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">aistudio.google.com</a>
                               </p>
+                            )}
+                            {provider.id === "deepseek" && (
+                              <div className="space-y-1">
+                                <p className="text-xs text-ink-2">
+                                  Get your key at <a href="https://www.deepseek.com/en/" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">deepseek.com</a>
+                                </p>
+                                <p className="text-xs text-ink-2">
+                                  Optional base URL: <code className="bg-surface-1 px-1 rounded">https://api.deepseek.com/v1</code>
+                                </p>
+                              </div>
                             )}
                             {provider.id === "mistral" && (
                               <p className="text-xs text-ink-2">
@@ -1377,20 +1528,161 @@ export function SettingsPage() {
                         </div>
                       </div>
                       {key.isActive && (
-                        <button
-                          onClick={() => handleRevokeKey(key._id)}
-                          className="rounded p-2 text-ink-2 hover:bg-surface-2 hover:text-red-500 transition-colors"
-                        >
-                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleRotateKey(key._id)}
+                            className="rounded p-2 text-ink-2 hover:bg-surface-2 hover:text-ink-0 transition-colors"
+                            title="Rotate key"
+                          >
+                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m14.62 2A7.5 7.5 0 005.582 9M20 20v-5h-.581m0 0a7.5 7.5 0 01-14.62-2" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => handleRevokeKey(key._id)}
+                            className="rounded p-2 text-ink-2 hover:bg-surface-2 hover:text-red-500 transition-colors"
+                            title="Revoke key"
+                          >
+                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
                       )}
                     </div>
                   ))}
                 </div>
               )}
             </div>
+          </section>
+
+          <section className="card">
+            <h2 className="font-semibold text-ink-0">Agent status</h2>
+            <p className="mt-1 text-sm text-ink-1">
+              Live runtime status for your account.
+            </p>
+            <div className="mt-4 flex items-center gap-2 rounded-lg border border-surface-3 bg-surface-1 px-3 py-2">
+              <span className="status-online" />
+              <span className="text-sm text-ink-0">Online</span>
+            </div>
+          </section>
+
+          {/* Security tab (includes rate limits) */}
+          <section className="card">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="font-semibold text-ink-0">Security</h2>
+                <p className="mt-1 text-sm text-ink-1">
+                  Review alerts and rate limiting windows from one settings section.
+                </p>
+              </div>
+              <button
+                onClick={handleDownloadSecurityCsv}
+                disabled={!securityCsv}
+                className="btn-secondary text-sm"
+              >
+                Export CSV
+              </button>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-2 rounded-lg bg-surface-1 p-1">
+              <button
+                type="button"
+                onClick={() => setSecurityTab("alerts")}
+                className={`rounded-md px-3 py-2 text-sm ${
+                  securityTab === "alerts"
+                    ? "bg-surface-0 text-ink-0 shadow-card"
+                    : "text-ink-1"
+                }`}
+              >
+                Alerts
+              </button>
+              <button
+                type="button"
+                onClick={() => setSecurityTab("rate_limits")}
+                className={`rounded-md px-3 py-2 text-sm ${
+                  securityTab === "rate_limits"
+                    ? "bg-surface-0 text-ink-0 shadow-card"
+                    : "text-ink-1"
+                }`}
+              >
+                Rate limits
+              </button>
+            </div>
+
+            {securityTab === "alerts" ? (
+              <div className="mt-4">
+                {securityEvents === undefined ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-surface-3 border-t-accent" />
+                  </div>
+                ) : securityEvents.length === 0 ? (
+                  <p className="text-sm text-ink-1">No security alerts found.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {securityEvents.slice(0, 20).map((event) => (
+                      <div
+                        key={event._id}
+                        className="rounded-lg border border-surface-3 bg-surface-1 p-3"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded bg-red-100 px-2 py-0.5 text-xs text-red-700">
+                            {event.status}
+                          </span>
+                          <span className="rounded bg-surface-2 px-2 py-0.5 text-xs text-ink-1">
+                            {event.action}
+                          </span>
+                          <span className="text-xs text-ink-2">
+                            {new Date(event.timestamp).toLocaleString()}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-sm text-ink-0">{event.resource}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="mt-4">
+                {rateLimitDashboard === undefined ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-surface-3 border-t-accent" />
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-lg border border-surface-3 bg-surface-1 p-3">
+                        <p className="text-xs text-ink-1">Active windows</p>
+                        <p className="mt-1 text-2xl font-semibold text-ink-0">
+                          {rateLimitDashboard.activeWindows}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-surface-3 bg-surface-1 p-3">
+                        <p className="text-xs text-ink-1">Requests in current window</p>
+                        <p className="mt-1 text-2xl font-semibold text-ink-0">
+                          {rateLimitDashboard.totalRequestsInWindow}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {rateLimitDashboard.topKeys.length === 0 ? (
+                        <p className="text-sm text-ink-1">No active windows.</p>
+                      ) : (
+                        rateLimitDashboard.topKeys.map((entry) => (
+                          <div
+                            key={entry.key}
+                            className="flex items-center justify-between rounded-lg border border-surface-3 bg-surface-1 p-3"
+                          >
+                            <p className="truncate text-sm text-ink-0">{entry.key}</p>
+                            <span className="text-xs text-ink-1">{entry.count}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </section>
 
           {/* Danger zone */}

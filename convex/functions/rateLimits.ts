@@ -5,6 +5,7 @@
  */
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
+import { authedQuery } from "../lib/functions";
 
 // Window duration in milliseconds (1 minute)
 const WINDOW_MS = 60 * 1000;
@@ -120,6 +121,58 @@ export const reset = internalMutation({
     }
 
     return null;
+  },
+});
+
+export const getDashboard = authedQuery({
+  args: {},
+  returns: v.object({
+    activeWindows: v.number(),
+    totalRequestsInWindow: v.number(),
+    topKeys: v.array(
+      v.object({
+        key: v.string(),
+        count: v.number(),
+        resetAt: v.number(),
+      })
+    ),
+  }),
+  handler: async (ctx) => {
+    const now = Date.now();
+    const activeCutoff = now - WINDOW_MS;
+    const userIdString = String(ctx.userId);
+
+    const userApiKeys = await ctx.db
+      .query("apiKeys")
+      .withIndex("by_userId", (q) => q.eq("userId", ctx.userId))
+      .take(200);
+    const keyPrefixes = new Set(userApiKeys.map((apiKey) => apiKey.keyPrefix));
+
+    const windows = await ctx.db.query("rateLimits").take(1000);
+    const scoped = windows.filter((window) => {
+      if (window.windowStart < activeCutoff) return false;
+      if (window.key.includes(userIdString)) return true;
+      for (const prefix of keyPrefixes) {
+        if (window.key.includes(prefix)) return true;
+      }
+      return false;
+    });
+
+    const topKeys = scoped
+      .slice()
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10)
+      .map((entry) => ({
+        key: entry.key,
+        count: entry.count,
+        resetAt: entry.windowStart + WINDOW_MS,
+      }));
+
+    return {
+      activeWindows: scoped.length,
+      totalRequestsInWindow: scoped.reduce((sum, entry) => sum + entry.count, 0),
+      topKeys,
+    };
   },
 });
 

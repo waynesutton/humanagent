@@ -264,3 +264,112 @@ export const deleteArchivedTasks = authedMutation({
     return archivedTasks.length;
   },
 });
+
+// ============================================================
+// Task comments and attachments
+// ============================================================
+
+export const getTaskComments = authedQuery({
+  args: { taskId: v.id("tasks") },
+  returns: v.array(v.any()),
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (!task || task.userId !== ctx.userId) {
+      return [];
+    }
+
+    return await ctx.db
+      .query("taskComments")
+      .withIndex("by_taskId", (q) => q.eq("taskId", args.taskId))
+      .order("desc")
+      .take(100);
+  },
+});
+
+export const addTaskComment = authedMutation({
+  args: {
+    taskId: v.id("tasks"),
+    content: v.string(),
+  },
+  returns: v.id("taskComments"),
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (!task || task.userId !== ctx.userId) {
+      throw new Error("Task not found");
+    }
+    if (!args.content.trim()) {
+      throw new Error("Comment is required");
+    }
+
+    return await ctx.db.insert("taskComments", {
+      taskId: args.taskId,
+      userId: ctx.userId,
+      content: args.content.trim(),
+      createdAt: Date.now(),
+    });
+  },
+});
+
+export const generateTaskAttachmentUploadUrl = authedMutation({
+  args: {},
+  returns: v.string(),
+  handler: async (ctx) => {
+    return await ctx.storage.generateUploadUrl();
+  },
+});
+
+export const addTaskAttachment = authedMutation({
+  args: {
+    taskId: v.id("tasks"),
+    storageId: v.id("_storage"),
+    fileName: v.string(),
+    contentType: v.optional(v.string()),
+    size: v.optional(v.number()),
+  },
+  returns: v.id("taskAttachments"),
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (!task || task.userId !== ctx.userId) {
+      throw new Error("Task not found");
+    }
+
+    return await ctx.db.insert("taskAttachments", {
+      taskId: args.taskId,
+      userId: ctx.userId,
+      storageId: args.storageId,
+      fileName: args.fileName,
+      contentType: args.contentType,
+      size: args.size,
+      createdAt: Date.now(),
+    });
+  },
+});
+
+export const getTaskAttachments = authedQuery({
+  args: { taskId: v.id("tasks") },
+  returns: v.array(v.any()),
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (!task || task.userId !== ctx.userId) {
+      return [];
+    }
+
+    const rows = await ctx.db
+      .query("taskAttachments")
+      .withIndex("by_taskId", (q) => q.eq("taskId", args.taskId))
+      .order("desc")
+      .take(100);
+
+    const withUrls = await Promise.all(
+      rows.map(async (row) => {
+        const url = await ctx.storage.getUrl(row.storageId);
+        return {
+          ...row,
+          url: url ?? null,
+        };
+      })
+    );
+
+    return withUrls;
+  },
+});

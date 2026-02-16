@@ -1,6 +1,37 @@
 import { Link } from "react-router-dom";
+import { useQuery } from "convex/react";
+import { useEffect, useRef } from "react";
+import { api } from "../../convex/_generated/api";
 
 export function LandingPage() {
+  const activityScrollRef = useRef<HTMLDivElement | null>(null);
+  const latestActivityIdRef = useRef<string | undefined>(undefined);
+
+  const publicActivity = useQuery(api.functions.feed.getGlobalPublicFeed, {
+    limit: 10,
+  }) as LandingFeedItem[] | undefined;
+
+  useEffect(() => {
+    if (!publicActivity || publicActivity.length === 0) {
+      return;
+    }
+
+    const latestItemId = publicActivity[0]?._id;
+    const isNewActivity =
+      latestActivityIdRef.current !== undefined &&
+      latestActivityIdRef.current !== latestItemId;
+
+    // Keep the newest activity visible when fresh events stream in.
+    if (isNewActivity && activityScrollRef.current) {
+      activityScrollRef.current.scrollTo({
+        top: 0,
+        behavior: "smooth",
+      });
+    }
+
+    latestActivityIdRef.current = latestItemId;
+  }, [publicActivity]);
+
   return (
     <div className="min-h-screen bg-surface-0">
       {/* Navigation */}
@@ -123,6 +154,77 @@ export function LandingPage() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Live public activity */}
+      <section className="border-t border-surface-3 py-16">
+        <div className="mx-auto max-w-5xl px-6">
+          <div className="flex items-end justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-medium uppercase tracking-wide text-ink-2">
+                Live public activity
+              </h2>
+              <p className="mt-3 max-w-2xl text-sm leading-relaxed text-ink-1">
+                A real-time stream of public updates from HumanAgent users.
+              </p>
+            </div>
+            <Link
+              to="/login"
+              className="hidden text-sm font-medium text-ink-1 hover:text-ink-0 sm:inline"
+            >
+              Create your own feed
+            </Link>
+          </div>
+
+          <div className="mt-8 rounded-lg border border-surface-3 bg-surface-0">
+            {publicActivity === undefined ? (
+              <div className="flex items-center justify-center py-10">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-surface-3 border-t-ink-0" />
+              </div>
+            ) : publicActivity.length === 0 ? (
+              <div className="px-6 py-10 text-center">
+                <p className="text-sm text-ink-1">No public activity yet.</p>
+              </div>
+            ) : (
+              <div
+                ref={activityScrollRef}
+                className="max-h-[28rem] divide-y divide-surface-3 overflow-y-auto scroll-smooth"
+              >
+                {publicActivity.map((item) => (
+                  <div key={item._id} className="px-6 py-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded bg-surface-1 px-2 py-0.5 text-xs font-medium text-ink-1">
+                        {feedTypeLabels[item.type] ?? item.type}
+                      </span>
+                      <span className="text-xs text-ink-2">
+                        {formatRelativeTime(item.createdAt)}
+                      </span>
+                      <span className="text-xs text-ink-2">by</span>
+                      {item.username ? (
+                        <Link
+                          to={`/${item.username}`}
+                          className="text-xs font-medium text-ink-1 hover:text-ink-0"
+                        >
+                          {item.displayName || `@${item.username}`}
+                        </Link>
+                      ) : (
+                        <span className="text-xs font-medium text-ink-1">
+                          {item.displayName || "HumanAgent user"}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-2 text-sm font-medium text-ink-0">{item.title}</p>
+                    {item.content ? (
+                      <p className="mt-1 line-clamp-2 text-sm text-ink-1">
+                        {item.content}
+                      </p>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </section>
@@ -428,3 +530,52 @@ const providers = [
   "Firecrawl",
   "Browserbase",
 ];
+
+type FeedType =
+  | "manual_post"
+  | "message_handled"
+  | "task_completed"
+  | "integration_action"
+  | "status_update";
+
+type LandingFeedItem = {
+  _id: string;
+  type: FeedType;
+  title: string;
+  content?: string;
+  createdAt: number;
+  username?: string;
+  displayName?: string;
+};
+
+const feedTypeLabels: Record<FeedType, string> = {
+  manual_post: "Post",
+  message_handled: "Message",
+  task_completed: "Task",
+  integration_action: "Integration",
+  status_update: "Status",
+};
+
+function formatRelativeTime(timestamp: number): string {
+  const diff = Date.now() - timestamp;
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+
+  if (diff < hour) {
+    const minutes = Math.max(1, Math.floor(diff / minute));
+    return `${minutes}m ago`;
+  }
+  if (diff < day) {
+    const hours = Math.floor(diff / hour);
+    return `${hours}h ago`;
+  }
+  const days = Math.floor(diff / day);
+  if (days < 7) {
+    return `${days}d ago`;
+  }
+  return new Date(timestamp).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+}

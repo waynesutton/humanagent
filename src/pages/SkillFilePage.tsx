@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
 import { Id } from "../../convex/_generated/dataModel";
+import { notify } from "../lib/notify";
 
 interface Capability {
   name: string;
@@ -214,6 +215,9 @@ export function SkillFilePage() {
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+      notify.success("Skill saved");
+    } catch (error) {
+      notify.error("Could not save skill", error);
     } finally {
       setSaving(false);
     }
@@ -221,10 +225,16 @@ export function SkillFilePage() {
 
   async function handlePublish() {
     if (!currentSkill) return;
-    if (currentSkill.isPublished) {
-      await unpublishSkill({ skillId: currentSkill._id });
-    } else {
-      await publishSkill({ skillId: currentSkill._id });
+    try {
+      if (currentSkill.isPublished) {
+        await unpublishSkill({ skillId: currentSkill._id });
+        notify.success("Skill unpublished");
+      } else {
+        await publishSkill({ skillId: currentSkill._id });
+        notify.success("Skill published");
+      }
+    } catch (error) {
+      notify.error("Could not update publish state", error);
     }
   }
 
@@ -241,6 +251,9 @@ export function SkillFilePage() {
       setNewSkillName("");
       setNewSkillBio("");
       setCreateForAgent(undefined);
+      notify.success("Skill created");
+    } catch (error) {
+      notify.error("Could not create skill", error);
     } finally {
       setSaving(false);
     }
@@ -248,20 +261,38 @@ export function SkillFilePage() {
 
   async function handleDeleteSkill() {
     if (!currentSkill) return;
-    await removeSkill({ skillId: currentSkill._id });
-    setSelectedSkillId(undefined);
-    setShowDeleteConfirm(false);
+    try {
+      await removeSkill({ skillId: currentSkill._id });
+      setSelectedSkillId(undefined);
+      setShowDeleteConfirm(false);
+      notify.success("Skill deleted");
+    } catch (error) {
+      notify.error("Could not delete skill", error);
+    }
   }
 
   async function handleAssignToAgent(agentId: Id<"agents"> | null) {
     if (!currentSkill) return;
-    await assignToAgent({ skillId: currentSkill._id, agentId });
+    try {
+      await assignToAgent({ skillId: currentSkill._id, agentId });
+      notify.success(
+        "Assignment updated",
+        agentId ? "Skill linked to selected agent." : "Skill is now unassigned."
+      );
+    } catch (error) {
+      notify.error("Could not update assignment", error);
+    }
   }
 
   async function handleToggleActive() {
     if (!currentSkill) return;
     const next = currentSkill.isActive === false;
-    await updateSkill({ skillId: currentSkill._id, isActive: next });
+    try {
+      await updateSkill({ skillId: currentSkill._id, isActive: next });
+      notify.success(next ? "Skill enabled" : "Skill disabled");
+    } catch (error) {
+      notify.error("Could not update status", error);
+    }
   }
 
   async function handleImportSkills() {
@@ -305,9 +336,14 @@ export function SkillFilePage() {
       setImportUrl("");
       setImportText("");
       setImportFiles([]);
+      notify.success(
+        "Import complete",
+        `Imported ${totalImported} skill${totalImported === 1 ? "" : "s"}.`
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Import failed";
       setImportMessage(message);
+      notify.error("Import failed", error, "Could not import skills.");
     } finally {
       setImporting(false);
     }

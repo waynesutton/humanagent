@@ -50,11 +50,11 @@ export const getAgentThoughts = query({
   ),
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Not authenticated");
+    if (!identity) return [];
 
     // Verify agent ownership
     const agent = await ctx.db.get(args.agentId);
-    if (!agent) throw new Error("Agent not found");
+    if (!agent) return [];
 
     const user = await ctx.db
       .query("users")
@@ -62,7 +62,7 @@ export const getAgentThoughts = query({
         q.eq("authUserId", identity.subject)
       )
       .unique();
-    if (!user || agent.userId !== user._id) throw new Error("Unauthorized");
+    if (!user || agent.userId !== user._id) return [];
 
     const query = ctx.db
       .query("agentThoughts")

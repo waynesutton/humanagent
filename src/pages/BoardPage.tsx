@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
 import { Doc, Id } from "../../convex/_generated/dataModel";
+import { notify } from "../lib/notify";
 
 // Type aliases for cleaner code
 type BoardColumn = Doc<"boardColumns">;
@@ -20,6 +21,21 @@ interface Task {
   createdAt: number;
 }
 
+interface TaskComment {
+  _id: Id<"taskComments">;
+  content: string;
+  createdAt: number;
+}
+
+interface TaskAttachment {
+  _id: Id<"taskAttachments">;
+  fileName: string;
+  contentType?: string;
+  size?: number;
+  createdAt: number;
+  url: string | null;
+}
+
 
 export function BoardPage() {
   const columns = useQuery(api.functions.board.getColumns);
@@ -34,6 +50,11 @@ export function BoardPage() {
   const unarchiveTask = useMutation(api.functions.board.unarchiveTask);
   const archiveCompletedTasks = useMutation(api.functions.board.archiveCompletedTasks);
   const deleteArchivedTasks = useMutation(api.functions.board.deleteArchivedTasks);
+  const addTaskComment = useMutation(api.functions.board.addTaskComment);
+  const generateTaskAttachmentUploadUrl = useMutation(
+    api.functions.board.generateTaskAttachmentUploadUrl
+  );
+  const addTaskAttachment = useMutation(api.functions.board.addTaskAttachment);
 
   // Create task form
   const [newTaskText, setNewTaskText] = useState("");
@@ -53,19 +74,35 @@ export function BoardPage() {
   
   // Archive section expanded
   const [showArchive, setShowArchive] = useState(false);
+  const [detailsTaskId, setDetailsTaskId] = useState<Id<"tasks"> | null>(null);
+  const [newCommentText, setNewCommentText] = useState("");
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+
+  const taskComments = useQuery(
+    api.functions.board.getTaskComments,
+    detailsTaskId ? { taskId: detailsTaskId } : "skip"
+  ) as TaskComment[] | undefined;
+  const taskAttachments = useQuery(
+    api.functions.board.getTaskAttachments,
+    detailsTaskId ? { taskId: detailsTaskId } : "skip"
+  ) as TaskAttachment[] | undefined;
 
   async function handleCreateTask(e: React.FormEvent) {
     e.preventDefault();
     if (!newTaskText.trim() || !selectedColumn) return;
-
-    await createTask({
-      description: newTaskText.trim(),
-      boardColumnId: selectedColumn,
-      agentId: selectedAgent !== "none" ? selectedAgent : undefined,
-    });
-    setNewTaskText("");
-    setSelectedColumn(null);
-    setSelectedAgent("none");
+    try {
+      await createTask({
+        description: newTaskText.trim(),
+        boardColumnId: selectedColumn,
+        agentId: selectedAgent !== "none" ? selectedAgent : undefined,
+      });
+      setNewTaskText("");
+      setSelectedColumn(null);
+      setSelectedAgent("none");
+      notify.success("Task created");
+    } catch (error) {
+      notify.error("Could not create task", error);
+    }
   }
 
   function startEditingTask(task: Task) {
@@ -76,37 +113,129 @@ export function BoardPage() {
 
   async function handleUpdateTask() {
     if (!editingTask) return;
-    await updateTask({
-      taskId: editingTask,
-      description: editDescription.trim() || undefined,
-      agentId: editAgent !== "none" ? editAgent : null,
-    });
-    setEditingTask(null);
+    try {
+      await updateTask({
+        taskId: editingTask,
+        description: editDescription.trim() || undefined,
+        agentId: editAgent !== "none" ? editAgent : null,
+      });
+      setEditingTask(null);
+      notify.success("Task updated");
+    } catch (error) {
+      notify.error("Could not update task", error);
+    }
   }
 
   async function handleDeleteTask(taskId: Id<"tasks">) {
-    if (!window.confirm("Delete this task permanently?")) return;
-    await deleteTask({ taskId });
+    notify.confirmAction({
+      title: "Delete this task?",
+      description: "This will permanently remove the task.",
+      buttonTitle: "Delete",
+      onConfirm: async () => {
+        try {
+          await deleteTask({ taskId });
+          notify.success("Task deleted");
+        } catch (error) {
+          notify.error("Could not delete task", error);
+        }
+      },
+    });
   }
 
   async function handleArchiveTask(taskId: Id<"tasks">) {
-    await archiveTask({ taskId });
+    try {
+      await archiveTask({ taskId });
+      notify.success("Task archived");
+    } catch (error) {
+      notify.error("Could not archive task", error);
+    }
   }
 
   async function handleUnarchiveTask(taskId: Id<"tasks">) {
-    await unarchiveTask({ taskId });
+    try {
+      await unarchiveTask({ taskId });
+      notify.success("Task restored");
+    } catch (error) {
+      notify.error("Could not restore task", error);
+    }
   }
 
   async function handleArchiveCompleted() {
-    const count = await archiveCompletedTasks({});
-    if (count > 0) {
-      setShowArchive(true);
+    try {
+      const count = await archiveCompletedTasks({});
+      if (count > 0) {
+        setShowArchive(true);
+        notify.success("Completed tasks archived", `${count} archived.`);
+      } else {
+        notify.info("No completed tasks to archive");
+      }
+    } catch (error) {
+      notify.error("Could not archive completed tasks", error);
     }
   }
 
   async function handleDeleteAllArchived() {
-    if (!window.confirm("Delete all archived tasks permanently? This cannot be undone.")) return;
-    await deleteArchivedTasks({});
+    notify.confirmAction({
+      title: "Delete all archived tasks?",
+      description: "This cannot be undone.",
+      buttonTitle: "Delete all",
+      onConfirm: async () => {
+        try {
+          await deleteArchivedTasks({});
+          notify.success("Archived tasks deleted");
+        } catch (error) {
+          notify.error("Could not delete archived tasks", error);
+        }
+      },
+    });
+  }
+
+  async function handleAddComment() {
+    if (!detailsTaskId || !newCommentText.trim()) return;
+    try {
+      await addTaskComment({
+        taskId: detailsTaskId,
+        content: newCommentText.trim(),
+      });
+      setNewCommentText("");
+      notify.success("Comment added");
+    } catch (error) {
+      notify.error("Could not add comment", error);
+    }
+  }
+
+  async function handleUploadAttachment(file: File | null, input: HTMLInputElement) {
+    if (!detailsTaskId || !file) return;
+    setUploadingAttachment(true);
+    try {
+      const uploadUrl = await generateTaskAttachmentUploadUrl({});
+      const uploadResult = await fetch(uploadUrl, {
+        method: "POST",
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+        body: file,
+      });
+      if (!uploadResult.ok) {
+        throw new Error("Upload failed");
+      }
+      const json = (await uploadResult.json()) as { storageId?: string };
+      if (!json.storageId) {
+        throw new Error("Missing storage id");
+      }
+
+      await addTaskAttachment({
+        taskId: detailsTaskId,
+        storageId: json.storageId as Id<"_storage">,
+        fileName: file.name,
+        contentType: file.type || undefined,
+        size: file.size || undefined,
+      });
+      notify.success("Attachment uploaded");
+    } catch (error) {
+      notify.error("Could not upload attachment", error);
+    } finally {
+      setUploadingAttachment(false);
+      input.value = "";
+    }
   }
 
   function handleDragStart(taskId: Id<"tasks">) {
@@ -129,12 +258,17 @@ export function BoardPage() {
       else status = "in_progress";
     }
 
-    await moveTask({
-      taskId: draggingTask,
-      boardColumnId: columnId,
-      status,
-    });
-    setDraggingTask(null);
+    try {
+      await moveTask({
+        taskId: draggingTask,
+        boardColumnId: columnId,
+        status,
+      });
+    } catch (error) {
+      notify.error("Could not move task", error);
+    } finally {
+      setDraggingTask(null);
+    }
   }
 
   function getTasksForColumn(columnId: Id<"boardColumns">) {
@@ -179,6 +313,9 @@ export function BoardPage() {
 
   const sortedColumns = [...columns].sort((a, b) => a.order - b.order);
   const unassignedTasks = getUnassignedTasks();
+  const detailTask =
+    (tasks.find((task: Task) => task._id === detailsTaskId) as Task | undefined) ??
+    (archivedTasks.find((task: Task) => task._id === detailsTaskId) as Task | undefined);
 
   return (
     <DashboardLayout>
@@ -314,6 +451,112 @@ export function BoardPage() {
           </div>
         )}
 
+        {detailsTaskId && detailTask && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+            <div className="card mx-4 w-full max-w-2xl">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="font-semibold text-ink-0">Task details</h2>
+                  <p className="mt-1 text-sm text-ink-1">{detailTask.description}</p>
+                </div>
+                <button
+                  onClick={() => setDetailsTaskId(null)}
+                  className="rounded p-1 text-ink-2 hover:bg-surface-2"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="mt-5 grid gap-4 md:grid-cols-2">
+                <div>
+                  <h3 className="text-sm font-medium text-ink-0">Comments</h3>
+                  <div className="mt-2 max-h-56 space-y-2 overflow-y-auto rounded-lg border border-surface-3 bg-surface-1 p-3">
+                    {taskComments === undefined ? (
+                      <p className="text-sm text-ink-1">Loading comments...</p>
+                    ) : taskComments.length === 0 ? (
+                      <p className="text-sm text-ink-1">No comments yet.</p>
+                    ) : (
+                      taskComments.map((comment) => (
+                        <div key={comment._id} className="rounded bg-surface-0 p-2">
+                          <p className="text-sm text-ink-0">{comment.content}</p>
+                          <p className="mt-1 text-xs text-ink-2">
+                            {new Date(comment.createdAt).toLocaleString()}
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div className="mt-2 flex gap-2">
+                    <input
+                      value={newCommentText}
+                      onChange={(e) => setNewCommentText(e.target.value)}
+                      className="input flex-1"
+                      placeholder="Add a comment"
+                    />
+                    <button
+                      onClick={handleAddComment}
+                      className="btn-secondary text-sm"
+                      disabled={!newCommentText.trim()}
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-ink-0">Attachments</h3>
+                  <div className="mt-2 max-h-56 space-y-2 overflow-y-auto rounded-lg border border-surface-3 bg-surface-1 p-3">
+                    {taskAttachments === undefined ? (
+                      <p className="text-sm text-ink-1">Loading attachments...</p>
+                    ) : taskAttachments.length === 0 ? (
+                      <p className="text-sm text-ink-1">No attachments yet.</p>
+                    ) : (
+                      taskAttachments.map((file) => (
+                        <div key={file._id} className="flex items-center justify-between gap-2 rounded bg-surface-0 p-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm text-ink-0">{file.fileName}</p>
+                            <p className="text-xs text-ink-2">
+                              {file.size ? `${Math.round(file.size / 1024)} KB` : "file"}
+                            </p>
+                          </div>
+                          {file.url ? (
+                            <a
+                              href={file.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-ink-2-interactive hover:underline"
+                            >
+                              Open
+                            </a>
+                          ) : (
+                            <span className="text-xs text-ink-2">Unavailable</span>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <label className="btn-secondary mt-2 inline-flex cursor-pointer text-sm">
+                    {uploadingAttachment ? "Uploading..." : "Upload file"}
+                    <input
+                      type="file"
+                      className="hidden"
+                      onChange={(e) =>
+                        void handleUploadAttachment(
+                          e.target.files?.[0] ?? null,
+                          e.currentTarget
+                        )
+                      }
+                      disabled={uploadingAttachment}
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Board */}
         <div className="mt-6 grid gap-4 lg:grid-cols-3">
           {sortedColumns.map((column) => {
@@ -347,6 +590,7 @@ export function BoardPage() {
                         agentName={getAgentName(task.agentId)}
                         onDragStart={() => handleDragStart(task._id)}
                         onEdit={() => startEditingTask(task)}
+                        onOpenDetails={() => setDetailsTaskId(task._id)}
                         onDelete={() => handleDeleteTask(task._id)}
                         onArchive={() => handleArchiveTask(task._id)}
                         isDragging={draggingTask === task._id}
@@ -371,6 +615,7 @@ export function BoardPage() {
                   agentName={getAgentName(task.agentId)}
                   onDragStart={() => handleDragStart(task._id)}
                   onEdit={() => startEditingTask(task)}
+                  onOpenDetails={() => setDetailsTaskId(task._id)}
                   onDelete={() => handleDeleteTask(task._id)}
                   onArchive={() => handleArchiveTask(task._id)}
                   isDragging={draggingTask === task._id}
@@ -424,6 +669,7 @@ export function BoardPage() {
                       key={task._id}
                       task={task}
                       agentName={getAgentName(task.agentId)}
+                      onOpenDetails={() => setDetailsTaskId(task._id)}
                       onRestore={() => handleUnarchiveTask(task._id)}
                       onDelete={() => handleDeleteTask(task._id)}
                     />
@@ -443,6 +689,7 @@ function TaskCard({
   agentName,
   onDragStart,
   onEdit,
+  onOpenDetails,
   onDelete,
   onArchive,
   isDragging,
@@ -451,6 +698,7 @@ function TaskCard({
   agentName: string | null;
   onDragStart: () => void;
   onEdit: () => void;
+  onOpenDetails: () => void;
   onDelete: () => void;
   onArchive: () => void;
   isDragging: boolean;
@@ -466,6 +714,15 @@ function TaskCard({
       <div className="flex items-start justify-between gap-2">
         <p className="text-sm text-ink-0 flex-1">{task.description}</p>
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            onClick={(e) => { e.stopPropagation(); onOpenDetails(); }}
+            className="rounded p-1 text-ink-2 hover:bg-surface-2 hover:text-ink-0"
+            title="Details"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2m5-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </button>
           <button
             onClick={(e) => { e.stopPropagation(); onEdit(); }}
             className="rounded p-1 text-ink-2 hover:bg-surface-2 hover:text-ink-0"
@@ -516,11 +773,13 @@ function TaskCard({
 function ArchivedTaskCard({
   task,
   agentName,
+  onOpenDetails,
   onRestore,
   onDelete,
 }: {
   task: Task;
   agentName: string | null;
+  onOpenDetails: () => void;
   onRestore: () => void;
   onDelete: () => void;
 }) {
@@ -529,6 +788,15 @@ function ArchivedTaskCard({
       <div className="flex items-start justify-between gap-2">
         <p className="text-sm text-ink-1 flex-1 line-through">{task.description}</p>
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            onClick={onOpenDetails}
+            className="rounded p-1 text-ink-2 hover:bg-surface-2 hover:text-ink-0"
+            title="Details"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2m5-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </button>
           <button
             onClick={onRestore}
             className="rounded p-1 text-ink-2 hover:bg-green-100 hover:text-green-600"

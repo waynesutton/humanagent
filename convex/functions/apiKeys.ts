@@ -43,24 +43,7 @@ export const create = authedMutation({
   },
   returns: v.object({ key: v.string(), prefix: v.string() }),
   handler: async (ctx, args) => {
-    // Generate a random API key
-    const keyBytes = new Uint8Array(32);
-    crypto.getRandomValues(keyBytes);
-    const rawKey = `hag_sk_${Array.from(keyBytes)
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("")}`;
-
-    // Hash it for storage
-    const encoder = new TextEncoder();
-    const hashBuffer = await crypto.subtle.digest(
-      "SHA-256",
-      encoder.encode(rawKey)
-    );
-    const keyHash = Array.from(new Uint8Array(hashBuffer))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-
-    const keyPrefix = rawKey.slice(0, 12);
+    const { rawKey, keyHash, keyPrefix } = await generateHashedKey();
 
     await ctx.db.insert("apiKeys", {
       userId: ctx.userId,
@@ -93,6 +76,38 @@ export const revoke = authedMutation({
   },
 });
 
+export const rotate = authedMutation({
+  args: { keyId: v.id("apiKeys") },
+  returns: v.object({ key: v.string(), prefix: v.string() }),
+  handler: async (ctx, { keyId }) => {
+    const existingKey = await ctx.db.get(keyId);
+    if (!existingKey || existingKey.userId !== ctx.userId) {
+      throw new Error("Key not found");
+    }
+    if (!existingKey.isActive) {
+      throw new Error("Key is already revoked");
+    }
+
+    const { rawKey, keyHash, keyPrefix } = await generateHashedKey();
+
+    await ctx.db.insert("apiKeys", {
+      userId: ctx.userId,
+      name: existingKey.name,
+      keyHash,
+      keyPrefix,
+      scopes: existingKey.scopes,
+      rateLimitPerMinute: existingKey.rateLimitPerMinute,
+      isActive: true,
+      expiresAt: existingKey.expiresAt,
+      createdAt: Date.now(),
+    });
+
+    await ctx.db.patch(keyId, { isActive: false });
+
+    return { key: rawKey, prefix: keyPrefix };
+  },
+});
+
 // ============================================================
 // Internal
 // ============================================================
@@ -113,3 +128,26 @@ export const validateToken = internalQuery({
     return key;
   },
 });
+
+async function generateHashedKey(): Promise<{
+  rawKey: string;
+  keyHash: string;
+  keyPrefix: string;
+}> {
+  const keyBytes = new Uint8Array(32);
+  crypto.getRandomValues(keyBytes);
+  const rawKey = `hag_sk_${Array.from(keyBytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")}`;
+
+  const encoder = new TextEncoder();
+  const hashBuffer = await crypto.subtle.digest(
+    "SHA-256",
+    encoder.encode(rawKey)
+  );
+  const keyHash = Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
+  return { rawKey, keyHash, keyPrefix: rawKey.slice(0, 12) };
+}

@@ -134,14 +134,14 @@ export function DashboardPage() {
                 description="View and manage tasks privately"
               />
               <QuickAction
-                href="/a2a"
+                href="/automation"
                 icon={
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3.75h5.25m7.125 6.75H4.125A2.625 2.625 0 011.5 16.125V6.375A2.625 2.625 0 014.125 3.75h15.75A2.625 2.625 0 0122.5 6.375v9.75a2.625 2.625 0 01-2.625 2.625z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h12A2.25 2.25 0 0120.25 6v3.75A2.25 2.25 0 0118 12H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 14.25A2.25 2.25 0 016 12h12a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25H6A2.25 2.25 0 013.75 18v-3.75z" />
                   </svg>
                 }
-                label="A2A inbox"
-                description="Monitor agent to agent threads"
+                label="Automation"
+                description="A2A messaging and thinking tabs"
               />
             </div>
           </div>

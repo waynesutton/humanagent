@@ -48,6 +48,7 @@ alwaysApply: true
 - you use convex search https://docs.convex.dev/search/vector-search
 - you are an expert in clerk https://clerk.com/docs/react/reference/components/authentication/sign-in
 - you an an expert in convex vector search https://docs.convex.dev/search/vector-search
+- you are experienced with DeepSeek BYOK setup and OpenAI-compatible DeepSeek endpoints
 - you are an expert in understanding how Uploading and Storing Files with convex https://docs.convex.dev/file-storage/upload-files
 
 - you are an expert in setting up apps with Resend for email https://resend.com/docs/introduction

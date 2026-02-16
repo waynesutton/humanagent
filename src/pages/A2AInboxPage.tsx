@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
+import { notify } from "../lib/notify";
 
 type ThreadTab = "inbox" | "outbox";
 type ThreadItem = {
@@ -100,12 +101,16 @@ export function A2AInboxPage() {
 
   async function handleSendMessage() {
     if (!composeFromAgentId || !composeTargetAgentId || !composeMessage.trim()) {
-      setComposeError("Select sender, recipient, and message.");
+      const message = "Select sender, recipient, and message.";
+      setComposeError(message);
+      notify.warning("Missing message details", message);
       return;
     }
 
     if (composeFromAgentId === composeTargetAgentId) {
-      setComposeError("Sender and recipient must be different agents.");
+      const message = "Sender and recipient must be different agents.";
+      setComposeError(message);
+      notify.warning("Invalid recipient", message);
       return;
     }
 
@@ -123,7 +128,9 @@ export function A2AInboxPage() {
       setActiveTab("outbox");
       setSelectedThreadId(result.threadId);
       setSummaryResult(null);
+      notify.success("A2A message sent");
     } catch (error) {
+      notify.error("Could not send A2A message", error);
       setComposeError(
         error instanceof Error ? error.message : "Could not send A2A message."
       );
@@ -147,7 +154,9 @@ export function A2AInboxPage() {
       setQuickReplyMessage("");
       setActiveTab("outbox");
       setSummaryResult(null);
+      notify.success("Quick reply sent");
     } catch (error) {
+      notify.error("Could not send quick reply", error);
       setComposeError(
         error instanceof Error ? error.message : "Could not send quick reply."
       );
@@ -174,6 +183,9 @@ export function A2AInboxPage() {
         agentId: selectedAgentId,
       });
       setSummaryResult(result.summary);
+      notify.success("Thread summarized");
+    } catch (error) {
+      notify.error("Could not summarize thread", error);
     } finally {
       setSummarizing(false);
     }

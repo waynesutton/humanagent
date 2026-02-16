@@ -8,6 +8,7 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
 import { Id } from "../../convex/_generated/dataModel";
+import { notify } from "../lib/notify";
 
 type ConversationStatus = "active" | "resolved" | "escalated";
 
@@ -50,18 +51,27 @@ export function InboxPage() {
   // Handle sending a reply
   async function handleSendReply() {
     if (!selectedConversation || !replyText.trim()) return;
-
-    await sendReply({
-      conversationId: selectedConversation,
-      content: replyText.trim(),
-    });
-    setReplyText("");
+    try {
+      await sendReply({
+        conversationId: selectedConversation,
+        content: replyText.trim(),
+      });
+      setReplyText("");
+      notify.success("Reply sent");
+    } catch (error) {
+      notify.error("Could not send reply", error);
+    }
   }
 
   // Handle status change
   async function handleStatusChange(status: ConversationStatus) {
     if (!selectedConversation) return;
-    await updateStatus({ conversationId: selectedConversation, status });
+    try {
+      await updateStatus({ conversationId: selectedConversation, status });
+      notify.success("Conversation updated", `Status set to ${status}.`);
+    } catch (error) {
+      notify.error("Could not update status", error);
+    }
   }
 
   // Get channel icon

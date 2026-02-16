@@ -6,6 +6,7 @@ const llmProviderValidator = v.union(
   v.literal("openrouter"),
   v.literal("anthropic"),
   v.literal("openai"),
+  v.literal("deepseek"),
   v.literal("google"),
   v.literal("mistral"),
   v.literal("minimax"),
@@ -239,6 +240,7 @@ export default defineSchema({
       v.literal("openrouter"),
       v.literal("anthropic"),
       v.literal("openai"),
+      v.literal("deepseek"),
       v.literal("google"),
       v.literal("mistral"),
       v.literal("minimax"),
@@ -381,6 +383,33 @@ export default defineSchema({
       v.literal("dashboard")
     ),
     externalId: v.string(),
+    channelMetadata: v.optional(
+      v.object({
+        email: v.optional(
+          v.object({
+            from: v.string(),
+            inboxAddress: v.string(),
+            inboxId: v.optional(v.string()),
+            subject: v.optional(v.string()),
+            threadId: v.optional(v.string()),
+            lastMessageId: v.optional(v.string()),
+            deliveryStatus: v.optional(
+              v.union(
+                v.literal("received"),
+                v.literal("sent"),
+                v.literal("delivered"),
+                v.literal("bounced")
+              )
+            ),
+            lastEventType: v.optional(v.string()),
+            lastEventAt: v.optional(v.number()),
+            lastRecipients: v.optional(v.array(v.string())),
+            lastBounceType: v.optional(v.string()),
+            lastBounceSubType: v.optional(v.string()),
+          })
+        ),
+      })
+    ),
     messages: v.array(
       v.object({
         role: v.union(v.literal("agent"), v.literal("external")),
@@ -395,7 +424,9 @@ export default defineSchema({
     ),
     summary: v.optional(v.string()),
     createdAt: v.number(),
-  }).index("by_userId", ["userId"]),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_channel_externalId", ["channel", "externalId"]),
 
   // Kanban board columns
   boardColumns: defineTable({
@@ -442,6 +473,29 @@ export default defineSchema({
     .index("by_userId_status", ["userId", "status"])
     .index("by_userId_archived", ["userId", "isArchived"]),
 
+  // Task comments for collaboration context on board tasks.
+  taskComments: defineTable({
+    taskId: v.id("tasks"),
+    userId: v.id("users"),
+    content: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_taskId", ["taskId"])
+    .index("by_userId", ["userId"]),
+
+  // Task attachments metadata with storage file references.
+  taskAttachments: defineTable({
+    taskId: v.id("tasks"),
+    userId: v.id("users"),
+    storageId: v.id("_storage"),
+    fileName: v.string(),
+    contentType: v.optional(v.string()),
+    size: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_taskId", ["taskId"])
+    .index("by_userId", ["userId"]),
+
   // Activity feed items
   feedItems: defineTable({
     userId: v.id("users"),
@@ -456,10 +510,15 @@ export default defineSchema({
     content: v.optional(v.string()),
     metadata: v.optional(v.any()),
     isPublic: v.boolean(),
+    isHidden: v.optional(v.boolean()), // Hidden from feed but not deleted
+    isArchived: v.optional(v.boolean()), // Archived for later reference
+    updatedAt: v.optional(v.number()), // Track edits
     createdAt: v.number(),
   })
     .index("by_userId", ["userId"])
-    .index("by_userId_public", ["userId", "isPublic"]),
+    .index("by_public", ["isPublic"])
+    .index("by_userId_public", ["userId", "isPublic"])
+    .index("by_userId_archived", ["userId", "isArchived"]),
 
   // Security flags for input scanning
   securityFlags: defineTable({
@@ -659,4 +718,26 @@ export default defineSchema({
   })
     .index("by_userId", ["userId"])
     .index("by_username", ["username"]),
+
+  // Webhook retry queue for transient processing failures.
+  webhookRetries: defineTable({
+    provider: v.union(v.literal("agentmail")),
+    payload: v.string(),
+    attempts: v.number(),
+    maxAttempts: v.number(),
+    nextAttemptAt: v.number(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("completed"),
+      v.literal("failed")
+    ),
+    lastError: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_provider_status_nextAttemptAt", [
+      "provider",
+      "status",
+      "nextAttemptAt",
+    ]),
 });

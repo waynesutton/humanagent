@@ -38,6 +38,21 @@ update this file whenever auth behavior or auth related schema changes.
 | Frontend auth state | `useSyncExternalStore` subscribes to auth state | `src/hooks/useAuth.ts` |
 | Login entry point | GitHub sign in uses `auth.signIn("github")` | `src/pages/LoginPage.tsx` |
 
+## Upstream delta and compatibility note
+
+The upstream repo content now documents the package as `@convex-dev/auth` and shows HTTP wiring as `auth.http.add(http)`.
+
+Current project status:
+
+- This app remains on `@robelest/convex-auth` in `package.json`
+- This package exposes `auth.addHttpRoutes(http)` and does not expose `auth.http.add(http)` in the installed version
+- The current environment rejects `@convex-dev/auth` from npm registry, so migration cannot be completed in this repo until package access policy changes
+
+Decision:
+
+- Keep the working `@robelest/convex-auth` integration for now
+- Track migration work separately once `@convex-dev/auth` can be installed
+
 ## Auth flow in this codebase
 
 1. Frontend bootstraps Convex client and calls `initAuth(convex)`.
@@ -57,6 +72,7 @@ update this file whenever auth behavior or auth related schema changes.
 | Environment variables | `AUTH_GITHUB_ID`, `AUTH_GITHUB_SECRET`, `CONVEX_SITE_URL` |
 | Router integration | `auth.addHttpRoutes(http)` must stay in `convex/http.ts` |
 | Frontend bootstrap order | `initAuth` must run before auth state reads |
+| Package compatibility | Keep `@robelest/convex-auth` until `@convex-dev/auth` is installable in this environment |
 
 ## Tracking checklist
 
@@ -64,6 +80,8 @@ Status legend: `todo`, `in_progress`, `done`
 
 | Item | Status | Notes |
 | --- | --- | --- |
+| Validate npm policy for `@convex-dev/auth` and unblock install | todo | Required before migration from `@robelest/convex-auth` |
+| Prepare migration PR from `auth.addHttpRoutes(http)` to `auth.http.add(http)` | todo | Blocked by package availability |
 | Verify `CONVEX_SITE_URL` value in each environment | todo | Must match deployment domain |
 | Confirm auth callback is idempotent for repeated profile syncs | todo | Review `afterUserCreatedOrUpdated` behavior |
 | Add explicit owner check for onboarding and settings write paths | todo | Use `requireUserId` consistently |
@@ -74,4 +92,5 @@ Status legend: `todo`, `in_progress`, `done`
 
 | Date | Change | Author |
 | --- | --- | --- |
+| 2026-02-15 | Checked upstream docs and app wiring. Confirmed package migration to `@convex-dev/auth` is blocked by registry policy, kept stable `@robelest/convex-auth` integration and documented migration blockers. | Codex |
 | 2026-02-14 | Created initial auth tracking PRD from current codebase | Codex |

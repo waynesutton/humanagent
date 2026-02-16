@@ -34,6 +34,46 @@ export const getSecurityEvents = authedQuery({
   },
 });
 
+export const exportCsv = authedQuery({
+  args: {
+    limit: v.optional(v.number()),
+  },
+  returns: v.string(),
+  handler: async (ctx, args) => {
+    const events = await ctx.db
+      .query("auditLog")
+      .withIndex("by_userId", (q) => q.eq("userId", ctx.userId))
+      .order("desc")
+      .take(args.limit ?? 1000);
+
+    const header = [
+      "timestamp",
+      "action",
+      "resource",
+      "status",
+      "callerType",
+      "callerIdentity",
+      "channel",
+      "tokenCount",
+      "details",
+    ];
+    const rows = events.map((event) => [
+      new Date(event.timestamp).toISOString(),
+      event.action,
+      event.resource,
+      event.status,
+      event.callerType,
+      event.callerIdentity ?? "",
+      event.channel ?? "",
+      event.tokenCount?.toString() ?? "",
+      event.details ? JSON.stringify(event.details) : "",
+    ]);
+
+    const allRows = [header, ...rows];
+    return allRows.map((row) => row.map(escapeCsvValue).join(",")).join("\n");
+  },
+});
+
 // ============================================================
 // Internal mutations (append-only, no delete/update for status)
 // ============================================================
@@ -94,3 +134,8 @@ export const updateStatus = internalMutation({
     await ctx.db.patch(args.id, patch);
   },
 });
+
+function escapeCsvValue(value: string): string {
+  const escaped = value.replace(/"/g, "\"\"");
+  return `"${escaped}"`;
+}

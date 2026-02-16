@@ -338,6 +338,7 @@ export const updateSettings = authedMutation({
         v.literal("openrouter"),
         v.literal("anthropic"),
         v.literal("openai"),
+        v.literal("deepseek"),
         v.literal("google"),
         v.literal("mistral"),
         v.literal("minimax"),

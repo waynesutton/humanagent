@@ -205,6 +205,23 @@ async function callKimi(
 }
 
 /**
+ * Call DeepSeek API via OpenAI-compatible endpoint
+ */
+async function callDeepSeek(
+  apiKey: string,
+  model: string,
+  messages: ChatMessage[],
+  baseUrl?: string
+): Promise<{ content: string; tokensUsed: number }> {
+  return callOpenAI(
+    apiKey,
+    model,
+    messages,
+    baseUrl ?? "https://api.deepseek.com/v1"
+  );
+}
+
+/**
  * Call Google Gemini API
  */
 async function callGemini(
@@ -466,6 +483,14 @@ export const processMessage = internalAction({
           break;
         case "openai":
           result = await callOpenAI(
+            credentials.apiKey,
+            config.model,
+            messages,
+            credentials.baseUrl
+          );
+          break;
+        case "deepseek":
+          result = await callDeepSeek(
             credentials.apiKey,
             config.model,
             messages,

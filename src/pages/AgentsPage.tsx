@@ -10,6 +10,7 @@ import {
   ChatCircleDots,
   UserCircle,
 } from "@phosphor-icons/react";
+import { notify } from "../lib/notify";
 
 // Agent type from schema
 type Agent = Doc<"agents">;
@@ -19,6 +20,7 @@ const LLM_PROVIDERS = [
   { id: "openrouter", name: "OpenRouter" },
   { id: "anthropic", name: "Anthropic" },
   { id: "openai", name: "OpenAI" },
+  { id: "deepseek", name: "DeepSeek" },
   { id: "google", name: "Google AI" },
   { id: "mistral", name: "Mistral" },
   { id: "minimax", name: "MiniMax" },
@@ -171,6 +173,9 @@ export function AgentsPage() {
       setNewAgentName("");
       setNewAgentSlug("");
       setNewAgentDescription("");
+      notify.success("Agent created");
+    } catch (error) {
+      notify.error("Could not create agent", error);
     } finally {
       setCreating(false);
     }
@@ -346,6 +351,9 @@ export function AgentsPage() {
         },
       });
       setEditingAgent(null);
+      notify.success("Agent updated");
+    } catch (error) {
+      notify.error("Could not update agent", error);
     } finally {
       setSaving(false);
     }
@@ -359,13 +367,17 @@ export function AgentsPage() {
     setPhotoError(null);
 
     if (!file.type.startsWith("image/")) {
-      setPhotoError("Please select an image file.");
+      const message = "Please select an image file.";
+      setPhotoError(message);
+      notify.warning("Invalid file", message);
       input.value = "";
       return;
     }
 
     if (file.size > MAX_AGENT_PHOTO_SIZE_BYTES) {
-      setPhotoError("Image must be under 3MB.");
+      const message = "Image must be under 3MB.";
+      setPhotoError(message);
+      notify.warning("Image too large", message);
       input.value = "";
       return;
     }
@@ -394,9 +406,11 @@ export function AgentsPage() {
         agentId: editingAgent,
         storageId: uploadResult.storageId as Id<"_storage">,
       });
+      notify.success("Agent photo updated");
     } catch (error) {
       console.error("Failed to upload agent photo:", error);
       setPhotoError("Could not upload photo. Please try again.");
+      notify.error("Could not upload photo", error);
     } finally {
       setPhotoUploading(false);
       input.value = "";
@@ -404,12 +418,28 @@ export function AgentsPage() {
   }
 
   async function handleDeleteAgent(agentId: Id<"agents">) {
-    if (!window.confirm("Delete this agent? This will also delete all associated skills.")) return;
-    await deleteAgent({ agentId });
+    notify.confirmAction({
+      title: "Delete this agent?",
+      description: "This also deletes all associated skills.",
+      buttonTitle: "Delete",
+      onConfirm: async () => {
+        try {
+          await deleteAgent({ agentId });
+          notify.success("Agent deleted");
+        } catch (error) {
+          notify.error("Could not delete agent", error);
+        }
+      },
+    });
   }
 
   async function handleSetDefault(agentId: Id<"agents">) {
-    await setDefaultAgent({ agentId });
+    try {
+      await setDefaultAgent({ agentId });
+      notify.success("Default agent updated");
+    } catch (error) {
+      notify.error("Could not set default agent", error);
+    }
   }
 
   if (!agents) {
@@ -764,8 +794,11 @@ export function AgentsPage() {
                             value={editModel}
                             onChange={(e) => setEditModel(e.target.value)}
                             className="input mt-1"
-                            placeholder="anthropic/claude-sonnet-4"
+                            placeholder="gpt-4o or glm-5"
                           />
+                          <p className="mt-1 text-xs text-ink-2">
+                            Supports provider-native model names, including `glm-5` with OpenAI-compatible endpoints.
+                          </p>
                         </div>
                       </div>
                     </div>

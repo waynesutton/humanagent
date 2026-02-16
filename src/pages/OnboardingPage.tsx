@@ -3,6 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { useAuth } from "../hooks/useAuth";
+import { notify } from "../lib/notify";
 
 export function OnboardingPage() {
   const navigate = useNavigate();
@@ -41,8 +42,10 @@ export function OnboardingPage() {
         name: name.trim() || undefined,
         bio: bio.trim() || undefined,
       });
+      notify.success("Profile created", "Your agent workspace is ready.");
       navigate("/dashboard", { replace: true });
     } catch (err) {
+      notify.error("Could not create profile", err, "Please check your inputs.");
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setLoading(false);

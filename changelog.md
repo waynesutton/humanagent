@@ -3,6 +3,71 @@
 All notable changes to HumanAgent are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Added
+
+- Added app-wide Sileo toast notifications with a shared helper in `src/lib/notify.ts`
+- Added global toaster mount in `src/App.tsx` and connected mutation flows across onboarding, settings, agents, board, inbox, A2A inbox, skills, and feed pages
+- Added toast-based action confirmations for destructive UI actions that previously used browser confirms
+- Added DeepSeek BYOK support across runtime routing and provider configuration UI (`SettingsPage`, `AgentsPage`)
+- Added DeepSeek provider guidance in settings with OpenAI-compatible default base URL (`https://api.deepseek.com/v1`)
+- Added a live public activity stream section to `src/pages/LandingPage.tsx` that subscribes to real-time public feed updates before the How it works section
+- Added `getGlobalPublicFeed` query in `convex/functions/feed.ts` for cross-user public feed streaming on landing surfaces
+- Added feed item management: users can now hide, archive, edit, and delete their own posts
+- Added `isHidden`, `isArchived`, and `updatedAt` fields to `feedItems` schema with `by_userId_archived` index
+- Added feed mutations: `updatePost`, `hidePost`, `unhidePost`, `archivePost`, `unarchivePost`, `deletePost`
+- Added `getArchivedFeed` query to retrieve archived posts
+- Added action menu on feed items with edit (manual posts only), hide, archive, and delete options
+- Added edit modal for updating post title, content, and visibility
+- Added delete confirmation modal to prevent accidental deletions
+- Added agent thinking timeline page (`/thinking`) to view per-agent reasoning, decisions, reflections, and goal updates
+- Added security alerts dashboard (`/security`) with blocked-event visibility and one-click CSV export from audit logs
+- Added health check HTTP endpoint at `/health` for uptime and monitoring checks
+- Added rate-limit dashboard page (`/rate-limits`) for active window monitoring and top-key visibility
+- Added webhook retry queue with exponential backoff for AgentMail webhook processing failures
+- Added persisted light/dark theme support with an Appearance toggle in settings
+- Added unified Automation dashboard page (`/automation`) with A2A and Thinking tabs
+- Added admin dashboard page (`/admin`) with user list and system stats
+- Added task collaboration support with task comments and task attachments in board task details
+- Added new task collaboration tables in schema (`taskComments`, `taskAttachments`)
+
+### Changed
+
+- Updated notification UX to use consistent success, warning, info, and error feedback across frontend actions
+- Updated `files.md` to reflect the Sileo notification layer and page-level notification behavior
+- Expanded schema and Convex provider validators to include `deepseek` across user, agent, and credential configuration
+- BYOK provider coverage is now 9 providers (OpenRouter, Anthropic, OpenAI, DeepSeek, Google, Mistral, MiniMax, Kimi, xAI)
+- Updated `feedItems` schema indexing with `by_public` to support efficient global public feed queries
+- Updated landing page live activity UX to show the latest 10 public items in a scrollable feed container that auto-scrolls as new activity streams in
+- Updated `getMyFeed` query to accept `includeArchived` and `includeHidden` params for filtering
+- Updated `getPublicFeed` to filter out hidden and archived items from public profiles
+- Updated API key management to support key rotation (create replacement key + revoke old key)
+- Updated dashboard navigation to use Automation and Admin surfaces
+- Updated Settings page to include Security tabs for both alerts and rate limits
+- Updated header account UX to use a username dropdown menu with Sign out under the username
+- Updated header to remove the global Online chip and moved status visibility into Settings
+- Updated Admin visibility so non-admin users do not see Admin nav and cannot access `/admin`
+- Updated Settings header to show a live "You are admin" role badge for admin users
+
+### Fixed
+
+- Fixed Vite package export issue by removing invalid `sileo/dist/styles.css` import path usage from `main.tsx`
+- Fixed low-contrast/blurred toast content by adding explicit Sileo data-attribute style overrides in `src/index.css`
+- Fixed noisy unauthorized errors from agent thinking queries by returning empty results for unauthenticated/unauthorized reads
+
+## [0.3.3] - 2026-02-14
+
+### Changed
+
+- Updated auth tracking PRD (`prds/robel-auth.md`) after upstream review to document current compatibility state: app remains on `@robelest/convex-auth` with `auth.addHttpRoutes(http)` until `@convex-dev/auth` is installable in this environment
+- Synced project inventory docs (`files.md`, `TASK.md`) with the latest auth compatibility and frontend build fixes
+
+### Fixed
+
+- Fixed Vite import-analysis failure for Sileo styles by switching `src/main.tsx` from `sileo/dist/styles.css` package subpath import to direct `../node_modules/sileo/dist/styles.css`
+- Verified frontend bundling after the style import change (`npx vite build` passes)
+
 ## [0.3.2] - 2026-02-14
 
 ### Added
@@ -93,7 +158,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Settings page now supports 8 LLM providers with BYOK credentials
 - Agents page now includes X/Twitter config, scheduling, and voice settings
 
-## [0.2.0] - 2026-02-13
+## [0.2.0] - 2026-02-14
 
 ### Added
 
@@ -119,7 +184,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Updated index.css with DM Sans import and component utility classes
 - Simplified AuthRequired wrapper with new loading states
 
-## [0.1.0] - 2026-02-13
+## [0.1.0] - 2026-02-14
 
 ### Added
 

@@ -349,4 +349,12 @@ crons.interval("agent scheduler", { minutes: 5 }, internal.crons.agentScheduler,
 
 crons.interval("llms.txt regeneration", { hours: 1 }, internal.functions.llmsTxt.regenerateAll, {});
 
+// Retry failed webhook deliveries with exponential backoff queue.
+crons.interval(
+  "webhook retry processor",
+  { minutes: 2 },
+  internal.functions.webhooks.retryAgentmailWebhooks,
+  {}
+);
+
 export default crons;

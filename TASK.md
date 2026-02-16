@@ -17,50 +17,71 @@ Active development tasks and roadmap items.
 
 ## Up Next
 
-- [ ] Add ElevenLabs voice integration for phone calls
-- [ ] Implement browser automation tools (Firecrawl, Stagehand, Browser Use)
-- [ ] Add agent scheduling execution (cron-based agent runs)
-- [ ] Build agent thinking UI for viewing reasoning/decisions
+- [x] Add ElevenLabs voice integration for phone calls
+- [x] Implement browser automation tools (Firecrawl, Stagehand, Browser Use) (if it make sense to add browser use with stang hand)
+- [x] Add agent scheduling execution (cron-based agent runs)
+- [x] Build agent thinking UI for viewing reasoning/decisions
 
 ## Backlog
 
 ### Core Features
 
-- [ ] Add email sending via Resend component
 - [ ] Implement Google Calendar sync via connected apps
+- [ ] add telegram, slack, discord, what's app support
 - [ ] Add Slack integration for agent notifications
 - [ ] Build LinkedIn posting integration
 
 ### Agent Capabilities
 
-- [ ] Vector search for agent memory retrieval
-- [ ] Memory compression cron job implementation
-- [ ] Agent-to-agent (A2A) communication protocol
+- [x] Vector search for agent memory retrieval
+- [x] Memory compression cron job implementation
+- [x] Agent-to-agent (A2A) communication protocol
 - [ ] Tool execution sandbox for agent actions
 
 ### UI/UX
 
-- [ ] Add task comments and attachments
-- [ ] Build conversation thread view
+- [x] Add task comments and attachments
+- [x] Build conversation thread view
 - [ ] Add agent activity timeline
-- [ ] Implement dark mode toggle
+- [x] Implement dark mode toggle
 
 ### Infrastructure
 
-- [ ] Add rate limit dashboard for monitoring
-- [ ] Build admin dashboard for user management
-- [ ] Implement webhook retry logic
-- [ ] Add health check endpoint for monitoring
+- [x] Add rate limit dashboard for monitoring
+- [x] Build admin dashboard for user management
+- [x] Implement webhook retry logic
+- [x] Add health check endpoint for monitoring
 
 ### Security
-
+- [x] Implement API key rotation
+- [x] Add audit log export functionality
+- [x] Build security alerts dashboard
 - [ ] Add two-factor authentication option
-- [ ] Implement API key rotation
-- [ ] Add audit log export functionality
-- [ ] Build security alerts dashboard
+
+# TBD
+
+- [ ] Add email sending via Resend component
+-
 
 ## Completed
 
+- [x] Add feed item management: hide, archive, edit, delete posts from Activity Feed
+- [x] Add `isHidden`, `isArchived`, `updatedAt` fields to `feedItems` schema with `by_userId_archived` index
+- [x] Add feed mutations: `updatePost`, `hidePost`, `unhidePost`, `archivePost`, `unarchivePost`, `deletePost`
+- [x] Add action menu dropdown on feed items with edit/hide/archive/delete options
+- [x] Add edit modal for updating manual posts
+- [x] Add delete confirmation modal for feed items
+- [x] Add live public activity section on `src/pages/LandingPage.tsx` before "How it works"
+- [x] Add global public feed query `getGlobalPublicFeed` in `convex/functions/feed.ts` for cross-user real-time stream consumption
+- [x] Add `feedItems` index `by_public` in `convex/schema.ts` to support global public feed lookups
+- [x] Update landing page public activity feed to show latest 10 items in a scrollable box with auto-scroll on incoming events
+- [x] Add Sileo as global notification system with shared helper (`src/lib/notify.ts`)
+- [x] Replace mutation status/error handling with Sileo toasts across onboarding, settings, agents, board, inbox, A2A inbox, skills, and feed pages
+- [x] Replace browser confirm dialogs with toast-based action confirmations for destructive actions
+- [x] Fix Sileo integration issues causing faded or low-contrast toast text
+- [x] Update docs inventory in `files.md` and changelog entries for notification system rollout
+- [x] Review upstream `robelest/convex-auth` updates and refresh `prds/robel-auth.md` with compatibility notes and migration blockers
+- [x] Fix Vite Sileo stylesheet import error in `src/main.tsx` and verify with `npx vite build`
 - [x] Harden public message API auth to fail closed on invalid API keys with stable JSON error envelopes
 - [x] Add canonical discovery docs routes: `/:username/sitemap.md`, `/api/v1/agents/:username/docs.md`, `/tools.md`, `/openapi.json`
 - [x] Add shared docs contract builder in `convex/functions/agentDocs.ts` for markdown + OpenAPI outputs
@@ -72,7 +93,8 @@ Active development tasks and roadmap items.
 - [x] Normalize social input handles/URLs to canonical links on save
 - [x] Add profile-card save button and helper text for social profile inputs
 - [x] Resolve all current TypeScript errors (`npm run typecheck` passes)
-- [x] Multi-provider BYOK LLM support (8 providers)
+- [x] Multi-provider BYOK LLM support (9 providers including DeepSeek)
+- [x] Add DeepSeek BYOK support across settings, agents, schema validators, credentials, and runtime routing
 - [x] Agent security module with injection detection
 - [x] MCP server endpoints with JSON-RPC 2.0
 - [x] WebMCP tool registration
@@ -85,6 +107,10 @@ Active development tasks and roadmap items.
 - [x] Board page with task management
 - [x] Feed page with public posts
 - [x] X/Twitter integration config
+- [x] Add admin route guard and hide Admin nav for non-admin users
+- [x] Move account actions to username dropdown in dashboard header
+- [x] Move Online status indicator from header into Settings
+- [x] Add admin badge in Settings for instant role visibility
 
 ## Notes
 

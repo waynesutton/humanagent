@@ -1,4 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { getAuth } from "../../lib/auth";
@@ -77,8 +78,8 @@ const navItems = [
     ),
   },
   {
-    label: "A2A",
-    href: "/a2a",
+    label: "Automation",
+    href: "/automation",
     icon: (
       <svg
         className="h-5 w-5"
@@ -89,7 +90,7 @@ const navItems = [
         <path
           strokeLinecap="round"
           strokeLinejoin="round"
-          d="M7.5 8.25h9m-9 3.75h5.25m7.125 6.75H4.125A2.625 2.625 0 011.5 16.125V6.375A2.625 2.625 0 014.125 3.75h15.75A2.625 2.625 0 0122.5 6.375v9.75a2.625 2.625 0 01-2.625 2.625z"
+          d="M3.75 6A2.25 2.25 0 016 3.75h12A2.25 2.25 0 0120.25 6v3.75A2.25 2.25 0 0118 12H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 14.25A2.25 2.25 0 016 12h12a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25H6A2.25 2.25 0 013.75 18v-3.75z"
         />
       </svg>
     ),
@@ -149,12 +150,53 @@ const navItems = [
       </svg>
     ),
   },
+  {
+    label: "Admin",
+    href: "/admin",
+    adminOnly: true,
+    icon: (
+      <svg
+        className="h-5 w-5"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth={1.5}>
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.964 0a9 9 0 10-11.964 0m11.964 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z"
+        />
+      </svg>
+    ),
+  },
 ];
 
 export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const viewer = useQuery(api.functions.users.viewer);
+  const isAdmin = useQuery(api.functions.admin.isAdmin);
   const auth = getAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const visibleNavItems = navItems.filter(
+    (item) => !("adminOnly" in item && item.adminOnly) || isAdmin === true
+  );
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (!menuRef.current) return;
+      if (!menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   return (
     <div className="min-h-screen bg-surface-0">
@@ -171,7 +213,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
 
             {/* Desktop nav */}
             <nav className="hidden items-center gap-1 lg:flex">
-              {navItems.map((item) => (
+              {visibleNavItems.map((item) => (
                 <Link
                   key={item.href}
                   to={item.href}
@@ -188,27 +230,60 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Agent status */}
-            <div className="hidden items-center gap-2 rounded-lg bg-surface-1 px-3 py-1.5 sm:flex">
-              <span className="status-online" />
-              <span className="text-xs font-medium text-ink-1">Online</span>
+            <div className="relative" ref={menuRef}>
+              <button
+                type="button"
+                onClick={() => setMenuOpen((prev) => !prev)}
+                className="btn-ghost text-sm"
+              >
+                {viewer?.username ? `/${viewer.username}` : "Account"}
+                <svg
+                  className={`h-4 w-4 transition-transform ${menuOpen ? "rotate-180" : ""}`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+
+              {menuOpen ? (
+                <div className="absolute right-0 z-50 mt-2 w-56 rounded-lg border border-surface-3 bg-surface-0 p-1 shadow-card">
+                  <Link
+                    to="/settings"
+                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-ink-1 hover:bg-surface-1 hover:text-ink-0"
+                  >
+                    Settings
+                  </Link>
+                  {isAdmin ? (
+                    <Link
+                      to="/admin"
+                      className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-ink-1 hover:bg-surface-1 hover:text-ink-0"
+                    >
+                      Admin
+                    </Link>
+                  ) : null}
+                  {viewer?.username ? (
+                    <a
+                      href={`/${viewer.username}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-ink-1 hover:bg-surface-1 hover:text-ink-0"
+                    >
+                      Public profile
+                    </a>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => auth.signOut()}
+                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-ink-1 hover:bg-surface-1 hover:text-red-500"
+                  >
+                    Sign out
+                  </button>
+                </div>
+              ) : null}
             </div>
-
-            {/* Public page link */}
-            {viewer?.username && (
-              <a
-                href={`/${viewer.username}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hidden text-sm text-ink-1 hover:text-ink-2-interactive lg:block">
-                /{viewer.username}
-              </a>
-            )}
-
-            {/* User menu */}
-            <button onClick={() => auth.signOut()} className="btn-ghost text-sm">
-              Sign out
-            </button>
           </div>
         </div>
       </header>
@@ -216,7 +291,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
       {/* Mobile nav */}
       <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-surface-3 bg-surface-0 lg:hidden">
         <div className="flex items-center justify-around py-2">
-          {navItems.slice(0, 5).map((item) => (
+          {visibleNavItems.slice(0, 5).map((item) => (
             <Link
               key={item.href}
               to={item.href}
