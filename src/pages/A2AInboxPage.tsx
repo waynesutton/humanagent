@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type KeyboardEvent } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
@@ -165,6 +165,20 @@ export function A2AInboxPage() {
     }
   }
 
+  function handleComposeMessageKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || !event.shiftKey) return;
+    event.preventDefault();
+    if (sending || !composeMessage.trim()) return;
+    void handleSendMessage();
+  }
+
+  function handleQuickReplyKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || !event.shiftKey) return;
+    event.preventDefault();
+    if (sending || !selectedPair || quickReplyMessage.trim().length === 0) return;
+    void handleQuickReply();
+  }
+
   function handleStartFromSelectedThread() {
     if (!selectedPair) return;
     setComposeFromAgentId(selectedPair.myAgentId);
@@ -292,8 +306,12 @@ export function A2AInboxPage() {
               rows={3}
               value={composeMessage}
               onChange={(e) => setComposeMessage(e.target.value)}
+              onKeyDown={handleComposeMessageKeyDown}
               placeholder="Write the first agent to agent message..."
             />
+            <p className="mt-2 text-xs text-ink-2">
+              Enter = new line, Shift+Enter = send
+            </p>
           </div>
           {composeError ? <p className="mt-3 text-sm text-red-500">{composeError}</p> : null}
           <div className="mt-4">
@@ -464,8 +482,12 @@ export function A2AInboxPage() {
                     rows={2}
                     value={quickReplyMessage}
                     onChange={(e) => setQuickReplyMessage(e.target.value)}
+                    onKeyDown={handleQuickReplyKeyDown}
                     placeholder="Reply to the peer agent in this thread..."
                   />
+                  <p className="mt-2 text-xs text-ink-2">
+                    Enter = new line, Shift+Enter = send
+                  </p>
                   <div className="mt-2">
                     <button
                       type="button"

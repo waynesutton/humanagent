@@ -5,6 +5,7 @@ import { DashboardLayout } from "../components/layout/DashboardLayout";
 import { FeedTimelineItem, type FeedTimelineItemData } from "../components/feed/FeedTimelineItem";
 import { notify } from "../lib/notify";
 import { platformApi } from "../lib/platformApi";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 type FeedItem = FeedTimelineItemData & { 
   isPublic: boolean;
@@ -13,15 +14,26 @@ type FeedItem = FeedTimelineItemData & {
   isArchived?: boolean;
 };
 
+type FeedView = "active" | "hidden" | "archived" | "all";
+
 export function FeedPage() {
-  const feedItems = useQuery(platformApi.convex.feed.getMyFeed, { limit: 50 });
+  const [feedView, setFeedView] = useState<FeedView>("active");
+  const queryIncludeHidden = feedView === "hidden" || feedView === "archived" || feedView === "all";
+  const queryIncludeArchived = feedView === "archived" || feedView === "all";
+  const feedItems = useQuery(platformApi.convex.feed.getMyFeed, {
+    limit: 50,
+    includeHidden: queryIncludeHidden,
+    includeArchived: queryIncludeArchived,
+  });
   const viewer = useQuery(platformApi.convex.auth.viewer);
   
   // Mutations
   const createPost = useMutation(platformApi.convex.feed.createPost);
   const updatePost = useMutation(platformApi.convex.feed.updatePost);
   const hidePost = useMutation(platformApi.convex.feed.hidePost);
+  const unhidePost = useMutation(platformApi.convex.feed.unhidePost);
   const archivePost = useMutation(platformApi.convex.feed.archivePost);
+  const unarchivePost = useMutation(platformApi.convex.feed.unarchivePost);
   const deletePost = useMutation(platformApi.convex.feed.deletePost);
 
   // New post form state
@@ -41,6 +53,10 @@ export function FeedPage() {
   // Delete confirmation state
   const [deletingItemId, setDeletingItemId] = useState<Id<"feedItems"> | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // ESC key handling for modals
+  useEscapeKey(() => setEditingItem(null), !!editingItem);
+  useEscapeKey(() => setDeletingItemId(null), !!deletingItemId && !editingItem);
 
   async function handlePost(e: React.FormEvent) {
     e.preventDefault();
@@ -104,6 +120,16 @@ export function FeedPage() {
     }
   }
 
+  // Unhide post
+  async function handleUnhide(itemId: Id<"feedItems">) {
+    try {
+      await unhidePost({ feedItemId: itemId });
+      notify.success("Post is visible again");
+    } catch (error) {
+      notify.error("Could not unhide post", error);
+    }
+  }
+
   // Archive post
   async function handleArchive(itemId: Id<"feedItems">) {
     try {
@@ -111,6 +137,16 @@ export function FeedPage() {
       notify.success("Post archived");
     } catch (error) {
       notify.error("Could not archive post", error);
+    }
+  }
+
+  // Unarchive post
+  async function handleUnarchive(itemId: Id<"feedItems">) {
+    try {
+      await unarchivePost({ feedItemId: itemId });
+      notify.success("Post moved back to feed");
+    } catch (error) {
+      notify.error("Could not unarchive post", error);
     }
   }
 
@@ -129,6 +165,13 @@ export function FeedPage() {
       setDeleting(false);
     }
   }
+
+  const visibleFeedItems = (feedItems ?? []).filter((item: FeedItem) => {
+    if (feedView === "hidden") return !!item.isHidden && !item.isArchived;
+    if (feedView === "archived") return !!item.isArchived;
+    if (feedView === "all") return true;
+    return !item.isHidden && !item.isArchived;
+  });
 
   return (
     <DashboardLayout>
@@ -225,23 +268,53 @@ export function FeedPage() {
 
         {/* Feed */}
         <div className="mt-6">
+          <div className="mb-4 flex flex-wrap gap-2">
+            {(
+              [
+                { key: "active", label: "Active" },
+                { key: "hidden", label: "Hidden" },
+                { key: "archived", label: "Archived" },
+                { key: "all", label: "All" },
+              ] as const
+            ).map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setFeedView(option.key)}
+                className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                  feedView === option.key
+                    ? "border-accent bg-accent/10 text-ink-0"
+                    : "border-surface-3 text-ink-1 hover:bg-surface-1"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
           {feedItems === undefined ? (
             <div className="flex items-center justify-center py-12">
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-3 border-t-accent" />
             </div>
-          ) : feedItems.length === 0 ? (
+          ) : visibleFeedItems.length === 0 ? (
             <div className="card py-12 text-center">
               <svg className="mx-auto h-10 w-10 text-ink-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <p className="mt-3 text-sm text-ink-1">No activity yet</p>
+              <p className="mt-3 text-sm text-ink-1">
+                {feedView === "active" && "No activity yet"}
+                {feedView === "hidden" && "No hidden posts"}
+                {feedView === "archived" && "No archived posts"}
+                {feedView === "all" && "No posts yet"}
+              </p>
               <p className="mt-1 text-xs text-ink-2">
-                Activity from your agent will appear here
+                {feedView === "active" && "Activity from your agent will appear here"}
+                {feedView !== "active" && "Use post actions to hide, archive, or restore items"}
               </p>
             </div>
           ) : (
             <div className="border border-surface-3 bg-surface-0">
-              {feedItems.map((item: FeedItem) => (
+              {visibleFeedItems.map((item: FeedItem) => (
                 <FeedTimelineItem
                   key={item._id}
                   item={item}
@@ -253,8 +326,16 @@ export function FeedPage() {
                     <FeedItemActions
                       item={item}
                       onEdit={() => openEdit(item)}
-                      onHide={() => handleHide(item._id as Id<"feedItems">)}
-                      onArchive={() => handleArchive(item._id as Id<"feedItems">)}
+                      onToggleHide={() =>
+                        item.isHidden
+                          ? handleUnhide(item._id as Id<"feedItems">)
+                          : handleHide(item._id as Id<"feedItems">)
+                      }
+                      onToggleArchive={() =>
+                        item.isArchived
+                          ? handleUnarchive(item._id as Id<"feedItems">)
+                          : handleArchive(item._id as Id<"feedItems">)
+                      }
                       onDelete={() => setDeletingItemId(item._id as Id<"feedItems">)}
                     />
                   }
@@ -359,14 +440,14 @@ export function FeedPage() {
 function FeedItemActions({
   item,
   onEdit,
-  onHide,
-  onArchive,
+  onToggleHide,
+  onToggleArchive,
   onDelete,
 }: {
   item: FeedItem;
   onEdit: () => void;
-  onHide: () => void;
-  onArchive: () => void;
+  onToggleHide: () => void;
+  onToggleArchive: () => void;
   onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -416,23 +497,23 @@ function FeedItemActions({
           )}
           <button
             type="button"
-            onClick={() => { onHide(); setOpen(false); }}
+            onClick={() => { onToggleHide(); setOpen(false); }}
             className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-ink-1 hover:bg-surface-1"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
             </svg>
-            Hide
+            {item.isHidden ? "Unhide" : "Hide"}
           </button>
           <button
             type="button"
-            onClick={() => { onArchive(); setOpen(false); }}
+            onClick={() => { onToggleArchive(); setOpen(false); }}
             className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-ink-1 hover:bg-surface-1"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
             </svg>
-            Archive
+            {item.isArchived ? "Unarchive" : "Archive"}
           </button>
           <button
             type="button"

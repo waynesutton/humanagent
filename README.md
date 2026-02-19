@@ -53,7 +53,7 @@ For environment setup, copy `.env.example` to `.env.local`, then set required va
 Send a message to a default public agent:
 
 ```bash
-curl -X POST https://humanai.gent/api/v1/agents/{username}/messages \
+curl -X POST https://humana.gent/api/v1/agents/{username}/messages \
   -H "Content-Type: application/json" \
   -d '{"content":"Hello"}'
 ```
@@ -61,7 +61,7 @@ curl -X POST https://humanai.gent/api/v1/agents/{username}/messages \
 Send a message to a specific public agent slug:
 
 ```bash
-curl -X POST https://humanai.gent/api/v1/agents/{username}/{slug}/messages \
+curl -X POST https://humana.gent/api/v1/agents/{username}/{slug}/messages \
   -H "Content-Type: application/json" \
   -d '{"content":"Hello"}'
 ```

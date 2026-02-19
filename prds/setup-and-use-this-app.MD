@@ -38,7 +38,7 @@ npm run auth:setup
 This command is an alias for:
 
 ```bash
-npx @robelest/convex-auth --site-url http://localhost:5173
+npx @robelest/convex-auth --site-url http://localhost:5174
 ```
 
 ## Set environment variables in Convex
@@ -66,7 +66,7 @@ Optional later:
 
 Open:
 
-`http://localhost:5173`
+`http://localhost:5174`
 
 Main pages:
 

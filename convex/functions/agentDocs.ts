@@ -93,7 +93,7 @@ export const getDocsPayload = query({
       })
     );
 
-    const baseUrl = process.env.SITE_URL || "https://humanai.gent";
+    const baseUrl = process.env.SITE_URL || "https://humana.gent";
 
     return {
       username: user.username,

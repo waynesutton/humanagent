@@ -6,7 +6,7 @@
 import { cronJobs } from "convex/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
-import { internalMutation } from "./_generated/server";
+import { internalAction, internalMutation } from "./_generated/server";
 
 const crons = cronJobs();
 
@@ -302,7 +302,6 @@ export const agentScheduler = internalMutation({
           scheduling: {
             ...scheduling,
             lastRun: now,
-            // For cron jobs, calculate next run (simplified: add 24 hours for daily)
             nextRun: scheduling.mode === "cron" ? now + 24 * 60 * 60 * 1000 : undefined,
           },
           updatedAt: now,
@@ -334,7 +333,118 @@ export const agentScheduler = internalMutation({
           },
           timestamp: now,
         });
+
+        // Schedule actual task processing for this agent
+        await ctx.scheduler.runAfter(0, internal.crons.processAgentTasks, {
+          userId: agent.userId,
+          agentId: agent._id,
+        });
       }
+    }
+
+    return null;
+  },
+});
+
+// Process pending/in-progress tasks for a scheduled agent via the LLM runtime
+export const processAgentTasks = internalAction({
+  args: {
+    userId: v.id("users"),
+    agentId: v.id("agents"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    // Get agent context including pending and in-progress tasks
+    const context = await ctx.runQuery(
+      internal.functions.agentThinking.getAgentContext,
+      { agentId: args.agentId }
+    );
+    if (!context || !context.agent) return null;
+
+    const pendingTasks = context.pendingTasks ?? [];
+    const inProgressTasks = context.inProgressTasks ?? [];
+
+    // Nothing to process if no actionable tasks
+    if (pendingTasks.length === 0 && inProgressTasks.length === 0) return null;
+
+    // Build a structured prompt the LLM can act on with app_actions
+    const taskLines: Array<string> = [];
+    taskLines.push("SCHEDULED TASK CHECK: You MUST process the tasks below and respond with app_actions to update their status.");
+    taskLines.push("This is an automated run. Do not ask questions. Take action on every task.");
+    taskLines.push("");
+
+    if (pendingTasks.length > 0) {
+      taskLines.push(`PENDING TASKS (move to in_progress or completed):`);
+      for (const task of pendingTasks.slice(0, 10)) {
+        const t = task as { _id: string; description: string; targetCompletionAt?: number };
+        const eta = t.targetCompletionAt
+          ? ` (due ${new Date(t.targetCompletionAt).toISOString().slice(0, 10)})`
+          : "";
+        taskLines.push(`  taskId="${t._id}" description="${t.description}"${eta}`);
+      }
+      taskLines.push("");
+    }
+
+    if (inProgressTasks.length > 0) {
+      taskLines.push(`IN-PROGRESS TASKS (complete with outcomeSummary or keep in_progress):`);
+      for (const task of inProgressTasks.slice(0, 10)) {
+        const t = task as { _id: string; description: string; targetCompletionAt?: number; doNowAt?: number };
+        const eta = t.targetCompletionAt
+          ? ` (due ${new Date(t.targetCompletionAt).toISOString().slice(0, 10)})`
+          : "";
+        const started = t.doNowAt
+          ? ` (started ${new Date(t.doNowAt).toISOString().slice(0, 16)})`
+          : "";
+        taskLines.push(`  taskId="${t._id}" description="${t.description}"${eta}${started}`);
+      }
+      taskLines.push("");
+    }
+
+    if (context.currentGoal) {
+      taskLines.push(`Current goal: ${context.currentGoal}`);
+      taskLines.push("");
+    }
+
+    // Instruct the agent to do the actual work first, then report status
+    taskLines.push("INSTRUCTIONS:");
+    taskLines.push("1. For each task above, READ the task description carefully and PERFORM the requested work.");
+    taskLines.push("   - If the task asks you to write something, write it in full.");
+    taskLines.push("   - If the task asks you to research or analyze, provide the full result.");
+    taskLines.push("   - If the task asks you to generate a list, generate the complete list.");
+    taskLines.push("   - Do NOT just acknowledge. Actually do the work and include it in your response.");
+    taskLines.push("   - NEVER reply with generic placeholders like 'Processing scheduled tasks.' or 'Done.'");
+    taskLines.push("2. Write ALL the work output in the main body of your response (before <app_actions>).");
+    taskLines.push("   - Include one markdown section per task using this format: '## Task <taskId>' then the detailed result.");
+    taskLines.push("3. After the work output, add an <app_actions> block to update the task status.");
+    taskLines.push("");
+    taskLines.push("Status action formats:");
+    taskLines.push("  Move to in-progress: {\"type\":\"update_task_status\",\"taskId\":\"TASK_ID\",\"status\":\"in_progress\"}");
+    taskLines.push("  Mark complete:       {\"type\":\"update_task_status\",\"taskId\":\"TASK_ID\",\"status\":\"completed\",\"outcomeSummary\":\"One-line summary of what was done\"}");
+    taskLines.push("  Mark failed:         {\"type\":\"update_task_status\",\"taskId\":\"TASK_ID\",\"status\":\"failed\",\"outcomeSummary\":\"Why it could not be completed\"}");
+    taskLines.push("");
+    taskLines.push("Example — task says 'Write a short poem about rain':");
+    taskLines.push("Rain falls soft on city streets,");
+    taskLines.push("Washing dust from tired concrete.");
+    taskLines.push("Each drop a breath, each puddle clear,");
+    taskLines.push("The world made new, and fresh, and here.");
+    taskLines.push("<app_actions>");
+    taskLines.push("[{\"type\":\"update_task_status\",\"taskId\":\"abc123\",\"status\":\"completed\",\"outcomeSummary\":\"Wrote requested poem about rain.\"}]");
+    taskLines.push("</app_actions>");
+
+    const message = taskLines.join("\n");
+
+    try {
+      const result = await ctx.runAction(internal.agent.runtime.processMessage, {
+        userId: args.userId,
+        agentId: args.agentId,
+        message,
+        channel: "dashboard",
+      });
+      console.log(
+        `processAgentTasks agent=${String(args.agentId)} tasks=${pendingTasks.length}p/${inProgressTasks.length}ip response=${result.response.slice(0, 200)}`
+      );
+    } catch (error) {
+      console.warn("processAgentTasks failed for agent", args.agentId, error);
     }
 
     return null;

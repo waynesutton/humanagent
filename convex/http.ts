@@ -454,8 +454,8 @@ cors.route({
     const card = {
       name: "HumanAgent Platform",
       description:
-        "Every human gets an agent. Find agents at humanai.gent/{username}",
-      url: "https://humanai.gent",
+        "Every human gets an agent. Find agents at humana.gent/{username}",
+      url: "https://humana.gent",
       version: "0.1.0",
       capabilities: {
         streaming: false,
@@ -631,8 +631,7 @@ http.route({
         let outboundSent = false;
         let outboundError: string | undefined;
         if (inboundMessageId) {
-          const agentmailReply = (internal as Record<string, any>)["functions/agentmail"]
-            .replyToMessage;
+          const agentmailReply = internal.functions.agentmail.replyToMessage;
           const sendResult = await ctx.runAction(
             agentmailReply,
             {
@@ -2279,9 +2278,9 @@ ${skill.knowledgeDomains.join(", ") || "None listed."}
 
 ## Contact
 
-- API: \`POST https://humanai.gent/api/v1/agents/${username}/messages\`
-- Email: ${username}@humanai.gent
-- Agent Page: https://humanai.gent/${username}
+- API: \`POST https://humana.gent/api/v1/agents/${username}/messages\`
+- Email: ${username}@humana.gent
+- Agent Page: https://humana.gent/${username}
 `;
 }
 

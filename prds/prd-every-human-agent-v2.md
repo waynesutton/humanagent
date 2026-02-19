@@ -3,7 +3,7 @@
 ## Product requirements document
 
 **Product name:** HumanAgent
-**Domain:** humanai.gent
+**Domain:** humana.gent
 **Version:** 0.2 (Updated PRD)
 **Author:** Wayne Sutton
 **Date:** February 2026
@@ -32,9 +32,9 @@ Every human gets:
 2. **An MCP Server** — Your own Model Context Protocol server that other AI systems can connect to, scoped to permissions you control
 3. **An API** — A personal REST endpoint that exposes your agent's capabilities to any application
 4. **An Agent** — A persistent AI agent running on Convex that acts on your behalf 24/7, with real-time state and memory
-5. **An Agent Email** — A dedicated email address (you@humanai.gent) powered by AgentMail, where other agents and humans can reach your agent
+5. **An Agent Email** — A dedicated email address (you@humana.gent) powered by AgentMail, where other agents and humans can reach your agent
 6. **An Agent Phone Number** — A voice-capable number where your agent answers calls, transcribes messages, and takes action
-7. **A Public Agent Page** — A markdown-friendly, agent-readable profile at humanai.gent/u/{username} with a public activity feed and optional kanban board
+7. **A Public Agent Page** — A markdown-friendly, agent-readable profile at humana.gent/u/{username} with a public activity feed and optional kanban board
 8. **Connected Apps** — Integrations with Twitter/X, LinkedIn, GitHub, email (Resend), SMS (Twilio), DNS (Cloudflare), and any API your agent can call
 
 All of this backed by Convex as the real-time backend (Convex Cloud as default, self-hosting available), open source for anyone to fork and run their own.
@@ -61,7 +61,7 @@ What's missing is the consumer layer. The thing that takes all of this infrastru
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                   humanai.gent Platform                      │
+│                   humana.gent Platform                      │
 │                                                              │
 │  ┌──────────────┐  ┌──────────────┐  ┌───────────────────┐  │
 │  │  Skill File  │  │  MCP Server  │  │  REST API         │  │
@@ -88,7 +88,7 @@ What's missing is the consumer layer. The thing that takes all of this infrastru
 │  │  Agent Email │  │  Agent Phone │  │  A2A Card         │  │
 │  │  (AgentMail) │  │  (Twilio)   │  │  (discovery)      │  │
 │  │  you@        │  │  +1 (xxx)   │  │  /.well-known/    │  │
-│  │  humanai.gent│  │  xxx-xxxx   │  │  agent.json       │  │
+│  │  humana.gent│  │  xxx-xxxx   │  │  agent.json       │  │
 │  └──────────────┘  └──────────────┘  └───────────────────┘  │
 │                                                              │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -108,7 +108,7 @@ What's missing is the consumer layer. The thing that takes all of this infrastru
 │                                                              │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │              Public Agent Page                        │   │
-│  │  humanai.gent/u/{username}                           │   │
+│  │  humana.gent/u/{username}                           │   │
 │  │  ┌──────────────┐  ┌────────────────────────────┐   │   │
 │  │  │ Public Feed  │  │  Kanban Board              │   │   │
 │  │  │ (activity)   │  │  (public + private views)  │   │   │
@@ -218,7 +218,7 @@ await auth.group.member.add(ctx, {
 
 **Admin portal:**
 
-The built-in admin portal gives us user management, session inspection, and invite management out of the box. We deploy it at `humanai.gent/auth` via:
+The built-in admin portal gives us user management, session inspection, and invite management out of the box. We deploy it at `humana.gent/auth` via:
 
 ```bash
 npx @robelest/convex-auth portal upload --prod
@@ -254,9 +254,9 @@ Every user gets a skill file in a standardized format inspired by Claude's SKILL
 **Format:**
 
 ```
-humanai.gent/u/{username}/skill.json    (machine-readable)
-humanai.gent/u/{username}/SKILL.md      (human + agent readable)
-humanai.gent/u/{username}/.well-known/skills/default/skill.md
+humana.gent/u/{username}/skill.json    (machine-readable)
+humana.gent/u/{username}/SKILL.md      (human + agent readable)
+humana.gent/u/{username}/.well-known/skills/default/skill.md
 ```
 
 **Contains:**
@@ -271,7 +271,7 @@ humanai.gent/u/{username}/.well-known/skills/default/skill.md
 **Key design decisions:**
 - JSON format with SKILL.md human-readable companion (both served)
 - Versioned (users can update capabilities over time)
-- Portable (can be hosted anywhere, not locked to humanai.gent)
+- Portable (can be hosted anywhere, not locked to humana.gent)
 - Signed (cryptographic verification that this skill belongs to this person)
 - Progressive disclosure (public layer, authenticated layer, trusted layer)
 - Fully typed with TypeScript/Zod schemas. Every field validated at write time.
@@ -285,12 +285,12 @@ Each user gets their own MCP server endpoint that any MCP-compatible client can 
 **MCP Endpoint:**
 
 ```
-https://humanai.gent/mcp/u/{username}
+https://humana.gent/mcp/u/{username}
 ```
 
 **WebMCP (browser-native):**
 
-When a browser agent visits `humanai.gent/u/{username}`, the page registers tools via `navigator.modelContext` (Chrome 146+ WebMCP API). This means browser-based agents can interact with your agent without a separate MCP client connection. Same tools, same permissions, native browser context.
+When a browser agent visits `humana.gent/u/{username}`, the page registers tools via `navigator.modelContext` (Chrome 146+ WebMCP API). This means browser-based agents can interact with your agent without a separate MCP client connection. Same tools, same permissions, native browser context.
 
 **Exposes:**
 - **Tools** — Actions your agent can perform (send_message, check_availability, share_document, create_meeting)
@@ -316,23 +316,23 @@ For systems that don't speak MCP, every user gets a REST API. All endpoints supp
 **Base URL:**
 
 ```
-https://api.humanai.gent/v1/u/{username}
+https://api.humana.gent/v1/u/{username}
 ```
 
 **Content negotiation:**
 
 ```bash
 # Human gets HTML
-curl https://humanai.gent/u/wayne
+curl https://humana.gent/u/wayne
 
 # Agent gets markdown
-curl -H "Accept: text/markdown" https://humanai.gent/u/wayne
+curl -H "Accept: text/markdown" https://humana.gent/u/wayne
 
 # Programmatic gets JSON
-curl -H "Accept: application/json" https://api.humanai.gent/v1/u/wayne/capabilities
+curl -H "Accept: application/json" https://api.humana.gent/v1/u/wayne/capabilities
 ```
 
-Every page on humanai.gent serves markdown when an agent requests it via `Accept: text/markdown`. This follows the same pattern Cloudflare and Vercel ship. Responses include `x-markdown-tokens` headers for context window management.
+Every page on humana.gent serves markdown when an agent requests it via `Accept: text/markdown`. This follows the same pattern Cloudflare and Vercel ship. Responses include `x-markdown-tokens` headers for context window management.
 
 **Endpoints:**
 - `GET /capabilities` — What this agent can do (JSON or markdown)
@@ -620,7 +620,7 @@ Every user gets a dedicated agent email address.
 **Address format:**
 
 ```
-wayne@humanai.gent (or custom domain)
+wayne@humana.gent (or custom domain)
 ```
 
 **How it works:**
@@ -704,7 +704,7 @@ Every user gets a public page that serves as their agent's home on the web.
 **URL:**
 
 ```
-https://humanai.gent/u/{username}
+https://humana.gent/u/{username}
 ```
 
 **The page includes:**
@@ -732,8 +732,8 @@ https://humanai.gent/u/{username}
 **Markdown-friendly by default:**
 - Every page serves markdown via content negotiation (`Accept: text/markdown`)
 - Includes `x-markdown-tokens` header for context window estimation
-- `.md` URL suffix also works: `humanai.gent/u/wayne.md`
-- Markdown sitemap at `humanai.gent/sitemap.md` listing all public agent pages
+- `.md` URL suffix also works: `humana.gent/u/wayne.md`
+- Markdown sitemap at `humana.gent/sitemap.md` listing all public agent pages
 - WebMCP tools registered on every page so browser agents can interact directly
 - `<link rel="alternate" type="text/markdown">` in HTML head for discoverability
 
@@ -749,7 +749,7 @@ Every user gets a discoverable Agent Card per the A2A protocol spec.
 **Location:**
 
 ```
-https://humanai.gent/u/{username}/.well-known/agent.json
+https://humana.gent/u/{username}/.well-known/agent.json
 ```
 
 **Contains:**
@@ -967,7 +967,7 @@ securityFlags
 ### Flow 1: Signup (consumer)
 
 ```
-1. User visits humanai.gent
+1. User visits humana.gent
 2. Signs up with email, OAuth, or passkey (via `@robelest/convex-auth`)
 3. Guided setup wizard:
    a. "What's your name?" → identity
@@ -991,10 +991,10 @@ securityFlags
    - Skill file (v1)
    - MCP server endpoint
    - REST API key
-   - AgentMail inbox (you@humanai.gent)
+   - AgentMail inbox (you@humana.gent)
    - Phone number (optional, Pro plan)
    - A2A Agent Card
-   - Public agent page at humanai.gent/u/{username}
+   - Public agent page at humana.gent/u/{username}
    - Default kanban board (Backlog, In Progress, Done)
 5. User lands on dashboard showing all endpoints + a test chat
 ```
@@ -1002,7 +1002,7 @@ securityFlags
 ### Flow 2: Another agent contacts your agent (email)
 
 ```
-1. External agent sends email to wayne@humanai.gent
+1. External agent sends email to wayne@humana.gent
 2. AgentMail webhook fires → Convex HTTP action receives it
 3. HTTP action triggers Convex mutation:
    a. Parse email (sender, subject, body, attachments)
@@ -1028,12 +1028,12 @@ securityFlags
 ### Flow 3: Developer integrates via MCP
 
 ```
-1. Developer discovers wayne's agent via A2A card or humanai.gent directory
+1. Developer discovers wayne's agent via A2A card or humana.gent directory
 2. Configures MCP client:
    {
      "mcpServers": {
        "wayne-agent": {
-         "url": "https://humanai.gent/mcp/u/wayne",
+         "url": "https://humana.gent/mcp/u/wayne",
          "auth": { "type": "oauth2" }
        }
      }
@@ -1050,7 +1050,7 @@ securityFlags
 ### Flow 4: Browser agent interacts via WebMCP
 
 ```
-1. Browser agent navigates to humanai.gent/u/wayne
+1. Browser agent navigates to humana.gent/u/wayne
 2. Page registers tools via navigator.modelContext:
    - registerTool("send_message", schema, handler)
    - registerTool("check_availability", schema, handler)
@@ -1377,7 +1377,7 @@ Each user's MCP server endpoint is isolated. Callers authenticate via bearer tok
 
 ```typescript
 // MCP endpoint validates on every request
-// humanai.gent/u/{username}/mcp
+// humana.gent/u/{username}/mcp
 http.route({
   path: "/u/:username/mcp",
   method: "POST",
@@ -1626,7 +1626,7 @@ Adapted from ClawSync's CLAUDE.md and OpenClaw's security hardening guides:
 ## Monetization
 
 **Free tier:**
-- Agent email (humanai.gent subdomain)
+- Agent email (humana.gent subdomain)
 - 3 MCP tools exposed
 - 100 inbound messages/month
 - REST API (rate limited)
@@ -1689,7 +1689,7 @@ MCP and A2A are both under active development. WebMCP is in early preview. Here'
 
 **Spec pinning per user.** Users can pin their agent to a specific protocol version in their skill file. Default is "latest stable." Developers who need stability can lock versions.
 
-**Changelog feed.** Protocol updates announced in a changelog at `humanai.gent/changelog`. Agent owners get notified when their agent's protocol version is deprecated.
+**Changelog feed.** Protocol updates announced in a changelog at `humana.gent/changelog`. Agent owners get notified when their agent's protocol version is deprecated.
 
 ---
 
@@ -1709,7 +1709,7 @@ MCP and A2A are both under active development. WebMCP is in early preview. Here'
 - [ ] Basic agent runtime (receive email, respond based on skill file)
 - [ ] REST API for send_message and get_capabilities
 - [ ] Content negotiation (markdown serving on all endpoints)
-- [ ] Public agent page at humanai.gent/u/{username}
+- [ ] Public agent page at humana.gent/u/{username}
 - [ ] Public feed (basic activity stream)
 - [ ] Dashboard (React + Vite + TypeScript)
 - [ ] A2A Agent Card generation
@@ -1777,7 +1777,7 @@ MCP and A2A are both under active development. WebMCP is in early preview. Here'
 |----------|----------|-----------|
 | Skill file standardization? | Ship fast, let adoption drive the spec | Standards bodies move slow. Ship a good format, open source it, iterate. Propose to AAIF later if it gets traction. |
 | LLM cost management for free tier? | Token budgets + smaller default models + BYOK escape hatch | 500K tokens/month on free tier with `mistralai/mistral-small` or equivalent. Pro gets 5M tokens with any model. BYOK removes all limits. OpenRouter free models also available. |
-| Identity verification? | Ship open, iterate on trust | Default humanai.gent addresses are first-come-first-served. Custom domains get DNS verification. Reputation system in Phase 4 adds trust signals. Open source means anyone can run their own instance anyway. |
+| Identity verification? | Ship open, iterate on trust | Default humana.gent addresses are first-come-first-served. Custom domains get DNS verification. Reputation system in Phase 4 adds trust signals. Open source means anyone can run their own instance anyway. |
 | Agent autonomy spectrum? | Full autonomy by default, escalation rules optional | Most users want their agent to just work. Power users can add escalation rules. The permission model handles safety. Open source means people can fork and add whatever guardrails they want. |
 | Privacy and compliance? | Self-hosting is the GDPR answer | Managed tier will comply with basics (deletion, export). Self-hosting gives full data sovereignty. We won't store data we don't need. |
 | Protocol evolution? | Versioned endpoints + adapter layer + spec pinning | See "Protocol evolution strategy" section above. |
@@ -1821,4 +1821,4 @@ MCP and A2A are both under active development. WebMCP is in early preview. Here'
 
 Every person deserves an agent that other agents can find, talk to, and work with.
 
-**humanai.gent**
+**humana.gent**

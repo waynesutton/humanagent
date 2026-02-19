@@ -19,7 +19,7 @@ In a second terminal:
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Open `http://localhost:5174`.
 
 ## What to ask the project owner for
 

@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { FeedTimelineItem, type FeedTimelineItemData } from "../components/feed/FeedTimelineItem";
-import { GithubLogo, LinkedinLogo, XLogo } from "@phosphor-icons/react";
+import { CopySimple, GithubLogo, LinkedinLogo, XLogo } from "@phosphor-icons/react";
 import type { Id } from "../../convex/_generated/dataModel";
 import { notify } from "../lib/notify";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 interface PrivacySettings {
   profileVisible: boolean;
@@ -83,6 +84,13 @@ interface PublicSocial {
   profileUrl?: string;
 }
 
+type ConnectCard = {
+  label: string;
+  value: string;
+  href: string;
+  external?: boolean;
+};
+
 const DEFAULT_PRIVACY: PrivacySettings = {
   profileVisible: true,
   showEmail: true,
@@ -134,7 +142,7 @@ export function PublicUserProfilePage() {
 
   const feedItems = useQuery(
     api.functions.feed.getPublicFeed,
-    normalizedUsername ? { username: normalizedUsername, limit: 20 } : "skip"
+    normalizedUsername ? { username: normalizedUsername, limit: 10 } : "skip"
   ) as PublicFeedItem[] | undefined;
 
   const socialProfiles = useQuery(
@@ -147,6 +155,9 @@ export function PublicUserProfilePage() {
   const [requestAgentId, setRequestAgentId] = useState<Id<"agents"> | null>(null);
   const [targetAgentId, setTargetAgentId] = useState<Id<"agents"> | null>(null);
   const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
+  const [isRequestFormOpen, setIsRequestFormOpen] = useState(false);
+
+  useEscapeKey(() => setActiveAgentId(null), !!activeAgentId);
   const viewer = useQuery(api.functions.users.viewer, {}) as ViewerUser | null | undefined;
   const requesterAgents = useQuery(
     api.functions.agents.list,
@@ -258,6 +269,13 @@ export function PublicUserProfilePage() {
     } finally {
       setIsSubmittingRequest(false);
     }
+  }
+
+  function handleRequestTaskKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || !event.shiftKey) return;
+    event.preventDefault();
+    if (!canRequestTask) return;
+    void handleRequestTask();
   }
 
   // Register WebMCP tools for Chrome 146+ (navigator.modelContext)
@@ -394,7 +412,7 @@ export function PublicUserProfilePage() {
       </nav>
 
       <main className="mx-auto flex max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 sm:py-10">
-        <section className="grid gap-4 lg:grid-cols-12">
+        <section className="grid items-stretch gap-4 lg:grid-cols-12">
           <div className="border border-surface-3 bg-surface-0 p-4 sm:p-6 lg:col-span-4">
             <div className="flex flex-col gap-5 sm:flex-row sm:items-start lg:flex-col">
               <Avatar image={selectedAgent?.image ?? user.image} name={selectedAgent?.name ?? user.name ?? normalizedUsername ?? "U"} />
@@ -432,77 +450,91 @@ export function PublicUserProfilePage() {
                   </div>
                 )}
 
-                <div className="mt-4 border border-surface-3 bg-surface-1 p-4">
-                  <h3 className="text-sm font-medium text-ink-0">Request an agent to do a task</h3>
-                  <p className="mt-1 text-sm text-ink-2">
-                    Sends the task into the target agent board Inbox. You must have a profile and at least one agent.
-                  </p>
+                <div className="mt-4 border border-surface-3 bg-surface-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsRequestFormOpen((prev) => !prev)}
+                    className="flex w-full items-center justify-between gap-3 p-4 text-left hover:bg-surface-2"
+                    aria-expanded={isRequestFormOpen}
+                  >
+                    <span className="text-sm font-medium text-ink-0">Request an agent to do a task</span>
+                    <span className="shrink-0 text-xs text-ink-2">{isRequestFormOpen ? "Hide" : "Show"}</span>
+                  </button>
+                  {isRequestFormOpen && (
+                    <div className="border-t border-surface-3 p-4">
+                      <p className="text-sm text-ink-2">
+                        Sends the task into the target agent board Inbox. You must have a profile and at least one agent.
+                      </p>
 
-                  {viewer === undefined ? (
-                    <div className="mt-3 border border-surface-3 bg-surface-0 p-3 text-sm text-ink-2">
-                      Checking your account...
-                    </div>
-                  ) : !hasRequesterProfile ? (
-                    <div className="mt-3 border border-surface-3 bg-surface-0 p-3 text-sm text-ink-2">
-                      Sign in with your profile to request a task.
-                    </div>
-                  ) : !hasRequesterAgent ? (
-                    <div className="mt-3 border border-surface-3 bg-surface-0 p-3 text-sm text-ink-2">
-                      Create at least one agent before sending requests.
-                    </div>
-                  ) : (
-                    <div className="mt-3 space-y-3">
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <label className="text-xs text-ink-2">
-                          <span className="mb-1 block">Your agent</span>
-                          <select
-                            value={requestAgentId ?? ""}
-                            onChange={(event) => setRequestAgentId(event.target.value as Id<"agents">)}
-                            className="w-full border border-surface-3 bg-surface-0 px-3 py-2 text-sm text-ink-1"
-                          >
-                            {requesterAgents?.map((agent) => (
-                              <option key={agent._id} value={agent._id}>
-                                {agent.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="text-xs text-ink-2">
-                          <span className="mb-1 block">Target public agent</span>
-                          <select
-                            value={targetAgentId ?? ""}
-                            onChange={(event) => setTargetAgentId(event.target.value as Id<"agents">)}
-                            className="w-full border border-surface-3 bg-surface-0 px-3 py-2 text-sm text-ink-1"
-                          >
-                            {publicAgents?.map((agent) => (
-                              <option key={agent._id} value={agent._id}>
-                                {agent.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      </div>
-                      <label className="text-xs text-ink-2">
-                        <span className="mb-1 block">Task description</span>
-                        <textarea
-                          value={requestDescription}
-                          onChange={(event) => setRequestDescription(event.target.value)}
-                          className="min-h-24 w-full resize-y border border-surface-3 bg-surface-0 px-3 py-2 text-sm text-ink-1"
-                          placeholder="Describe what you want this agent to do"
-                          maxLength={800}
-                        />
-                      </label>
-                      <div className="flex items-center justify-between gap-2 text-xs text-ink-2">
-                        <span>{requestDescription.trim().length}/800</span>
-                        <button
-                          type="button"
-                          onClick={() => void handleRequestTask()}
-                          disabled={!canRequestTask}
-                          className="border border-surface-3 px-3 py-1.5 text-sm text-ink-1 hover:bg-surface-0 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {isSubmittingRequest ? "Sending..." : "Request task"}
-                        </button>
-                      </div>
+                      {viewer === undefined ? (
+                        <div className="mt-3 border border-surface-3 bg-surface-0 p-3 text-sm text-ink-2">
+                          Checking your account...
+                        </div>
+                      ) : !hasRequesterProfile ? (
+                        <div className="mt-3 border border-surface-3 bg-surface-0 p-3 text-sm text-ink-2">
+                          Sign in with your profile to request a task.
+                        </div>
+                      ) : !hasRequesterAgent ? (
+                        <div className="mt-3 border border-surface-3 bg-surface-0 p-3 text-sm text-ink-2">
+                          Create at least one agent before sending requests.
+                        </div>
+                      ) : (
+                        <div className="mt-3 space-y-3">
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <label className="text-xs text-ink-2">
+                              <span className="mb-1 block">Your agent</span>
+                              <select
+                                value={requestAgentId ?? ""}
+                                onChange={(event) => setRequestAgentId(event.target.value as Id<"agents">)}
+                                className="w-full border border-surface-3 bg-surface-0 px-3 py-2 text-sm text-ink-1"
+                              >
+                                {requesterAgents?.map((agent) => (
+                                  <option key={agent._id} value={agent._id}>
+                                    {agent.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="text-xs text-ink-2">
+                              <span className="mb-1 block">Target public agent</span>
+                              <select
+                                value={targetAgentId ?? ""}
+                                onChange={(event) => setTargetAgentId(event.target.value as Id<"agents">)}
+                                className="w-full border border-surface-3 bg-surface-0 px-3 py-2 text-sm text-ink-1"
+                              >
+                                {publicAgents?.map((agent) => (
+                                  <option key={agent._id} value={agent._id}>
+                                    {agent.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+                          <label className="text-xs text-ink-2">
+                            <span className="mb-1 block">Task description</span>
+                            <textarea
+                              value={requestDescription}
+                              onChange={(event) => setRequestDescription(event.target.value)}
+                              onKeyDown={handleRequestTaskKeyDown}
+                              className="min-h-24 w-full resize-y border border-surface-3 bg-surface-0 px-3 py-2 text-sm text-ink-1"
+                              placeholder="Describe what you want this agent to do"
+                              maxLength={800}
+                            />
+                          </label>
+                          <div className="flex items-center justify-between gap-2 text-xs text-ink-2">
+                            <span>Enter = new line, Shift+Enter = request task</span>
+                            <span>{requestDescription.trim().length}/800</span>
+                            <button
+                              type="button"
+                              onClick={() => void handleRequestTask()}
+                              disabled={!canRequestTask}
+                              className="border border-surface-3 px-3 py-1.5 text-sm text-ink-1 hover:bg-surface-0 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {isSubmittingRequest ? "Sending..." : "Request task"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -512,14 +544,14 @@ export function PublicUserProfilePage() {
 
           <div className="border border-surface-3 bg-surface-0 p-4 sm:p-6 lg:col-span-8">
             <h2 className="text-sm font-medium uppercase tracking-wide text-ink-2">Activity</h2>
-            <div className="mt-3 border border-surface-3 bg-surface-0">
+            <div className="mt-3 max-h-96 overflow-y-auto border border-surface-3 bg-surface-0">
               {!privacy.showActivity ? (
                 <div className="p-4 text-sm text-ink-2">Public activity is hidden for this profile.</div>
               ) : !feedItems || feedItems.length === 0 ? (
                 <div className="p-4 text-sm text-ink-2">No public activity yet.</div>
               ) : (
-                <div>
-                  {feedItems.map((item) => (
+                <>
+                  {feedItems.slice(0, 10).map((item) => (
                     <FeedTimelineItem
                       key={item._id}
                       item={item}
@@ -528,7 +560,7 @@ export function PublicUserProfilePage() {
                       actorImage={selectedAgent?.image ?? user.image}
                     />
                   ))}
-                </div>
+                </>
               )}
             </div>
           </div>
@@ -583,16 +615,7 @@ export function PublicUserProfilePage() {
             <div className="mt-3 space-y-3">
               <div className="grid gap-3 sm:grid-cols-2">
                 {buildConnectCards(normalizedUsername, requestTargetAgent, privacy).map((card) => (
-                  <a
-                    key={card.label}
-                    href={card.href}
-                    target={card.external ? "_blank" : undefined}
-                    rel={card.external ? "noreferrer" : undefined}
-                    className="flex items-center justify-between gap-3 border border-surface-3 bg-surface-0 px-3 py-3 text-sm hover:bg-surface-1"
-                  >
-                    <span className="text-ink-1">{card.label}</span>
-                    <span className="truncate font-mono text-xs text-ink-2">{card.value}</span>
-                  </a>
+                  <ConnectCardRow key={card.label} card={card} />
                 ))}
               </div>
               <p className="text-xs text-ink-2">
@@ -630,16 +653,7 @@ export function PublicUserProfilePage() {
             <p className="mt-3 text-sm text-ink-1">{activeAgent.description || "No description yet."}</p>
             <div className="mt-4 grid gap-2 sm:grid-cols-2">
               {buildConnectCards(normalizedUsername, activeAgent, privacy).map((card) => (
-                <a
-                  key={`modal-${card.label}`}
-                  href={card.href}
-                  target={card.external ? "_blank" : undefined}
-                  rel={card.external ? "noreferrer" : undefined}
-                  className="border border-surface-3 bg-surface-0 px-3 py-2 text-xs text-ink-1 hover:bg-surface-1"
-                >
-                  <div className="font-medium text-ink-0">{card.label}</div>
-                  <div className="mt-1 truncate font-mono text-[11px] text-ink-2">{card.value}</div>
-                </a>
+                <ConnectCardRow key={`modal-${card.label}`} card={card} compact />
               ))}
             </div>
             <p className="mt-3 text-xs text-ink-2">
@@ -737,25 +751,25 @@ function getConnectPills(agent: PublicAgentSummary, privacy: PrivacySettings): s
 }
 
 function buildConnectCards(username: string, agent: PublicAgentSummary, privacy: PrivacySettings) {
-  const cards: Array<{ label: string; value: string; href: string; external?: boolean }> = [];
+  const cards: Array<ConnectCard> = [];
   if (agent.publicConnect?.showApi ?? true) {
     cards.push({
       label: "API",
-      value: `humanai.gent/api/v1/agents/${username}/${agent.slug}/messages`,
+      value: `humana.gent/api/v1/agents/${username}/${agent.slug}/messages`,
       href: `/api/v1/agents/${username}/${agent.slug}/messages`,
     });
   }
   if (agent.publicConnect?.showMcp ?? true) {
     cards.push({
       label: "MCP",
-      value: `humanai.gent/mcp/u/${username}/${agent.slug}`,
+      value: `humana.gent/mcp/u/${username}/${agent.slug}`,
       href: `/mcp/u/${username}/${agent.slug}`,
     });
   }
   if ((agent.publicConnect?.showSkillFile ?? true) && agent.slug) {
     cards.push({
       label: "Skill file",
-      value: `humanai.gent/u/${username}/${agent.slug}/skill.json`,
+      value: `humana.gent/u/${username}/${agent.slug}/skill.json`,
       href: `/u/${username}/${agent.slug}/skill.json`,
     });
   }
@@ -770,44 +784,102 @@ function buildConnectCards(username: string, agent: PublicAgentSummary, privacy:
   // Discovery docs endpoints
   cards.push({
     label: "Agent llms (persona)",
-    value: `humanai.gent/${username}/${agent.slug}/llms.txt`,
+    value: `humana.gent/${username}/${agent.slug}/llms.txt`,
     href: `/${username}/${agent.slug}/llms.txt`,
   });
   cards.push({
     label: "Agent llms full (persona)",
-    value: `humanai.gent/${username}/${agent.slug}/llms-full.md`,
+    value: `humana.gent/${username}/${agent.slug}/llms-full.md`,
     href: `/${username}/${agent.slug}/llms-full.md`,
   });
   cards.push({
     label: "Profile llms (aggregate)",
-    value: `humanai.gent/${username}/llms.txt`,
+    value: `humana.gent/${username}/llms.txt`,
     href: `/${username}/llms.txt`,
   });
   cards.push({
     label: "Profile llms full (aggregate)",
-    value: `humanai.gent/${username}/llms-full.md`,
+    value: `humana.gent/${username}/llms-full.md`,
     href: `/${username}/llms-full.md`,
   });
   cards.push({
     label: "API Docs",
-    value: `humanai.gent/api/v1/agents/${username}/docs.md`,
+    value: `humana.gent/api/v1/agents/${username}/docs.md`,
     href: `/api/v1/agents/${username}/docs.md`,
   });
   cards.push({
     label: "Tools Docs",
-    value: `humanai.gent/api/v1/agents/${username}/tools.md`,
+    value: `humana.gent/api/v1/agents/${username}/tools.md`,
     href: `/api/v1/agents/${username}/tools.md`,
   });
   cards.push({
     label: "OpenAPI",
-    value: `humanai.gent/api/v1/agents/${username}/openapi.json`,
+    value: `humana.gent/api/v1/agents/${username}/openapi.json`,
     href: `/api/v1/agents/${username}/openapi.json`,
   });
   cards.push({
     label: "Sitemap",
-    value: `humanai.gent/${username}/sitemap.md`,
+    value: `humana.gent/${username}/sitemap.md`,
     href: `/${username}/sitemap.md`,
   });
   return cards;
+}
+
+function ConnectCardRow({ card, compact = false }: { card: ConnectCard; compact?: boolean }) {
+  const handleCopy = async () => {
+    if (typeof navigator === "undefined" || !navigator.clipboard) return;
+    const copyValue = card.href.startsWith("mailto:") || card.value.startsWith("http")
+      ? card.value
+      : `https://${card.value}`;
+    await navigator.clipboard.writeText(copyValue);
+  };
+
+  if (compact) {
+    return (
+      <div className="flex items-start gap-2 border border-surface-3 bg-surface-0 px-3 py-2 text-xs text-ink-1">
+        <a
+          href={card.href}
+          target={card.external ? "_blank" : undefined}
+          rel={card.external ? "noreferrer" : undefined}
+          className="min-w-0 flex-1"
+        >
+          <div className="font-medium text-ink-0">{card.label}</div>
+          <div className="mt-1 truncate font-mono text-[11px] text-ink-2">{card.value}</div>
+        </a>
+        <button
+          type="button"
+          onClick={() => void handleCopy()}
+          className="mt-0.5 rounded p-1 text-ink-2 transition-colors hover:bg-surface-1 hover:text-ink-0"
+          aria-label={`Copy ${card.label}`}
+          title={`Copy ${card.label}`}
+        >
+          <CopySimple size={14} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 border border-surface-3 bg-surface-0 px-3 py-3 text-sm">
+      <a
+        href={card.href}
+        target={card.external ? "_blank" : undefined}
+        rel={card.external ? "noreferrer" : undefined}
+        className="flex min-w-0 flex-1 items-center justify-between gap-3 hover:text-ink-0"
+      >
+        <span className="text-ink-1">{card.label}</span>
+        <span className="truncate font-mono text-xs text-ink-2">{card.value}</span>
+      </a>
+      <button
+        type="button"
+        onClick={() => void handleCopy()}
+        className="rounded p-1 text-ink-2 transition-colors hover:bg-surface-1 hover:text-ink-0"
+        aria-label={`Copy ${card.label}`}
+        title={`Copy ${card.label}`}
+      >
+        <CopySimple size={14} />
+      </button>
+    </div>
+  );
 }
 

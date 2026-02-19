@@ -1,15 +1,19 @@
 import { sileo, type SileoOptions } from "sileo";
+import { createElement } from "react";
 
 type PromiseFactory<T> = Promise<T> | (() => Promise<T>);
+
+const DEFAULT_TOAST_DURATION_MS = 5400;
+const DEFAULT_CONFIRM_DURATION_MS = 5400;
 
 const baseOptions: Pick<
   SileoOptions,
   "position" | "roundness" | "fill" | "duration"
 > = {
-  position: "top-right",
-  roundness: 1,
+  position: "bottom-right",
+  roundness: 18,
   fill: "#111827",
-  duration: 2400,
+  duration: DEFAULT_TOAST_DURATION_MS,
 };
 
 function showDismissible(
@@ -19,8 +23,13 @@ function showDismissible(
   let toastId = "";
   toastId = show({
     ...options,
+    autopilot: false,
+    styles: {
+      ...options.styles,
+      button: "sileo-corner-dismiss sileo-corner-dismiss-only",
+    },
     button: {
-      title: "x",
+      title: "\u00d7",
       onClick: () => sileo.dismiss(toastId),
     },
   });
@@ -102,16 +111,39 @@ export const notify = {
     buttonTitle: string;
     onConfirm: () => void | Promise<void>;
   }) {
-    sileo.action({
+    let toastId = "";
+    toastId = sileo.action({
       ...baseOptions,
       title,
-      description,
-      duration: 10000,
+      description: createElement(
+        "div",
+        { className: "sileo-confirm-description" },
+        createElement("span", null, description),
+        createElement(
+          "button",
+          {
+            type: "button",
+            className: "sileo-confirm-button",
+            onClick: () => {
+              void onConfirm();
+              sileo.dismiss(toastId);
+            },
+          },
+          buttonTitle
+        )
+      ),
+      duration: DEFAULT_CONFIRM_DURATION_MS,
+      autopilot: {
+        expand: 0,
+        collapse: DEFAULT_CONFIRM_DURATION_MS,
+      },
+      styles: {
+        description: "sileo-confirm-description-wrap",
+        button: "sileo-corner-dismiss sileo-corner-dismiss-action",
+      },
       button: {
-        title: buttonTitle,
-        onClick: () => {
-          void onConfirm();
-        },
+        title: "\u00d7",
+        onClick: () => sileo.dismiss(toastId),
       },
     });
   },

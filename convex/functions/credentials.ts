@@ -1,6 +1,7 @@
 import { v } from "convex/values";
-import { internalQuery, internalMutation } from "../_generated/server";
+import { action, internalQuery, internalMutation } from "../_generated/server";
 import { authedMutation, authedQuery } from "../lib/functions";
+import { api, internal } from "../_generated/api";
 
 // Service types for validation
 const serviceValidator = v.union(
@@ -17,6 +18,9 @@ const serviceValidator = v.union(
   // Integrations
   v.literal("agentmail"),
   v.literal("twilio"),
+  v.literal("telnyx"),
+  v.literal("plivo"),
+  v.literal("vapi"),
   v.literal("elevenlabs"),
   v.literal("resend"),
   v.literal("github"),
@@ -43,6 +47,72 @@ const LLM_PROVIDERS = [
   "kimi",
   "xai",
 ] as const;
+
+const providerValidator = v.union(
+  v.literal("openrouter"),
+  v.literal("anthropic"),
+  v.literal("openai"),
+  v.literal("deepseek"),
+  v.literal("google"),
+  v.literal("mistral"),
+  v.literal("minimax"),
+  v.literal("kimi"),
+  v.literal("xai"),
+  v.literal("custom")
+);
+
+const modelOptionValidator = v.object({
+  id: v.string(),
+  label: v.string(),
+});
+
+const modelCatalogResultValidator = v.object({
+  provider: providerValidator,
+  models: v.array(modelOptionValidator),
+  source: v.union(v.literal("live"), v.literal("fallback"), v.literal("empty")),
+  fetchedAt: v.number(),
+  hasCredential: v.boolean(),
+  error: v.optional(v.string()),
+});
+
+const PROVIDER_MODEL_FALLBACKS: Record<
+  (typeof LLM_PROVIDERS)[number],
+  Array<{ id: string; label: string }>
+> = {
+  openrouter: [
+    { id: "anthropic/claude-sonnet-4", label: "Claude Sonnet 4" },
+    { id: "openai/gpt-4o", label: "GPT-4o" },
+  ],
+  anthropic: [
+    { id: "claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
+    { id: "claude-3-7-sonnet-latest", label: "Claude 3.7 Sonnet" },
+  ],
+  openai: [
+    { id: "gpt-5.2", label: "GPT-5.2" },
+    { id: "gpt-5-mini", label: "GPT-5 mini" },
+    { id: "gpt-5-nano", label: "GPT-5 nano" },
+    { id: "gpt-4o", label: "GPT-4o" },
+    { id: "gpt-4.1-mini", label: "GPT-4.1 mini" },
+  ],
+  deepseek: [
+    { id: "deepseek-chat", label: "DeepSeek Chat" },
+    { id: "deepseek-reasoner", label: "DeepSeek Reasoner" },
+  ],
+  google: [
+    { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
+    { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
+  ],
+  mistral: [
+    { id: "mistral-large-latest", label: "Mistral Large" },
+    { id: "ministral-8b-latest", label: "Ministral 8B" },
+  ],
+  minimax: [{ id: "abab6.5s-chat", label: "MiniMax ABAB 6.5S" }],
+  kimi: [{ id: "kimi-k2-0711-preview", label: "Kimi K2" }],
+  xai: [
+    { id: "grok-2-1212", label: "Grok 2" },
+    { id: "grok-beta", label: "Grok Beta" },
+  ],
+};
 
 // ============================================================
 // Public queries
@@ -118,8 +188,16 @@ export const getLLMProviderStatus = authedQuery({
       };
     }
 
-    // Key integrations (AgentMail, Twilio, ElevenLabs, Resend)
-    const integrations = ["agentmail", "twilio", "elevenlabs", "resend"] as const;
+    // Key integrations (email, telephony, and voice orchestration)
+    const integrations = [
+      "agentmail",
+      "twilio",
+      "telnyx",
+      "plivo",
+      "vapi",
+      "elevenlabs",
+      "resend",
+    ] as const;
     for (const integration of integrations) {
       const cred = creds.find((c) => c.service === integration);
       status[integration] = {
@@ -152,6 +230,107 @@ export const getLLMProviderStatus = authedQuery({
     }
 
     return status;
+  },
+});
+
+export const getModelCatalog = authedQuery({
+  args: { provider: providerValidator },
+  returns: modelCatalogResultValidator,
+  handler: async (ctx, { provider }) => {
+    if (provider === "custom") {
+      return {
+        provider,
+        models: [],
+        source: "empty" as const,
+        fetchedAt: Date.now(),
+        hasCredential: false,
+      };
+    }
+    const cred = await ctx.db
+      .query("userCredentials")
+      .withIndex("by_userId_service", (q) =>
+        q.eq("userId", ctx.userId).eq("service", provider)
+      )
+      .first();
+
+    return {
+      provider,
+      models: cred?.encryptedApiKey
+        ? PROVIDER_MODEL_FALLBACKS[provider]
+        : [],
+      source: cred?.encryptedApiKey ? ("fallback" as const) : ("empty" as const),
+      fetchedAt: Date.now(),
+      hasCredential: !!cred?.encryptedApiKey,
+    };
+  },
+});
+
+export const refreshModelCatalog = action({
+  args: { provider: providerValidator },
+  returns: modelCatalogResultValidator,
+  handler: async (ctx, { provider }) => {
+    if (provider === "custom") {
+      return {
+        provider,
+        models: [],
+        source: "empty" as const,
+        fetchedAt: Date.now(),
+        hasCredential: false,
+      };
+    }
+
+    const viewer = await ctx.runQuery(api.functions.users.viewer, {});
+    if (!viewer) throw new Error("Not authenticated");
+
+    const credential = await ctx.runQuery(internal.functions.credentials.getDecryptedApiKey, {
+      userId: viewer._id,
+      service: provider,
+    });
+
+    if (!credential?.apiKey) {
+      return {
+        provider,
+        models: [],
+        source: "empty" as const,
+        fetchedAt: Date.now(),
+        hasCredential: false,
+      };
+    }
+
+    const fetchedAt = Date.now();
+    try {
+      const models = await fetchProviderModels(
+        provider,
+        credential.apiKey,
+        credential.config?.baseUrl
+      );
+      if (models.length === 0) {
+        return {
+          provider,
+          models: PROVIDER_MODEL_FALLBACKS[provider],
+          source: "fallback" as const,
+          fetchedAt,
+          hasCredential: true,
+        };
+      }
+      return {
+        provider,
+        models,
+        source: "live" as const,
+        fetchedAt,
+        hasCredential: true,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load models";
+      return {
+        provider,
+        models: PROVIDER_MODEL_FALLBACKS[provider],
+        source: "fallback" as const,
+        fetchedAt,
+        hasCredential: true,
+        error: message,
+      };
+    }
   },
 });
 
@@ -376,4 +555,79 @@ function decryptApiKey(encrypted: string): string {
   // In production: decrypt with AES-256-GCM
   // For now, we use base64 decoding (NOT SECURE - replace in production)
   return atob(encrypted);
+}
+
+function normalizeModelOptions(
+  rawModels: Array<{ id?: string; name?: string }>
+): Array<{ id: string; label: string }> {
+  const deduped = new Map<string, { id: string; label: string }>();
+  for (const model of rawModels) {
+    if (!model.id) continue;
+    deduped.set(model.id, {
+      id: model.id,
+      label: model.name?.trim() ? model.name : model.id,
+    });
+  }
+  return Array.from(deduped.values()).sort((a, b) => a.id.localeCompare(b.id));
+}
+
+async function fetchProviderModels(
+  provider: (typeof LLM_PROVIDERS)[number],
+  apiKey: string,
+  baseUrl?: string
+): Promise<Array<{ id: string; label: string }>> {
+  if (provider === "google") {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(
+        apiKey
+      )}`
+    );
+    if (!response.ok) throw new Error(`Google AI model fetch failed: ${response.status}`);
+    const payload = (await response.json()) as {
+      models?: Array<{ name?: string; displayName?: string }>;
+    };
+    const raw = (payload.models ?? []).map((m) => ({
+      id: m.name?.replace("models/", ""),
+      name: m.displayName,
+    }));
+    return normalizeModelOptions(raw);
+  }
+
+  const resolvedBaseUrl = (baseUrl?.trim() || getDefaultBaseUrl(provider)).replace(/\/$/, "");
+  const response = await fetch(`${resolvedBaseUrl}/models`, {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      ...(provider === "anthropic" ? { "anthropic-version": "2023-06-01" } : {}),
+    },
+  });
+  if (!response.ok) throw new Error(`${provider} model fetch failed: ${response.status}`);
+  const payload = (await response.json()) as {
+    data?: Array<{ id?: string; name?: string }>;
+    models?: Array<{ id?: string; name?: string }>;
+  };
+  const raw = payload.data ?? payload.models ?? [];
+  return normalizeModelOptions(raw);
+}
+
+function getDefaultBaseUrl(provider: (typeof LLM_PROVIDERS)[number]): string {
+  switch (provider) {
+    case "openrouter":
+      return "https://openrouter.ai/api/v1";
+    case "anthropic":
+      return "https://api.anthropic.com/v1";
+    case "openai":
+      return "https://api.openai.com/v1";
+    case "deepseek":
+      return "https://api.deepseek.com/v1";
+    case "google":
+      return "https://generativelanguage.googleapis.com/v1beta";
+    case "mistral":
+      return "https://api.mistral.ai/v1";
+    case "minimax":
+      return "https://api.minimax.chat/v1";
+    case "kimi":
+      return "https://api.moonshot.ai/v1";
+    case "xai":
+      return "https://api.x.ai/v1";
+  }
 }

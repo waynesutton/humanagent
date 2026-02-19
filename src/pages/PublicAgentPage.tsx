@@ -51,6 +51,7 @@ interface PublicTask {
   description: string;
   status: string;
   createdAt: number;
+  targetCompletionAt?: number;
 }
 
 interface PublicFeedItem {
@@ -458,6 +459,12 @@ export function PublicAgentPage() {
                     </div>
                     <p className="mt-2 text-xs text-ink-2">
                       {formatDate(task.createdAt)}
+                      {task.targetCompletionAt
+                        ? ` • Target ${new Date(task.targetCompletionAt).toLocaleDateString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                          })}`
+                        : ""}
                     </p>
                   </div>
                 ))}
@@ -498,7 +505,7 @@ export function PublicAgentPage() {
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     <EndpointCard
                       title="Default API"
-                      value={`humanai.gent/api/v1/agents/${normalizedUsername}/messages`}
+                      value={`humana.gent/api/v1/agents/${normalizedUsername}/messages`}
                       icon={
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -507,7 +514,7 @@ export function PublicAgentPage() {
                     />
                     <EndpointCard
                       title="Default MCP Server"
-                      value={`humanai.gent/mcp/u/${normalizedUsername}`}
+                      value={`humana.gent/mcp/u/${normalizedUsername}`}
                       icon={
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
@@ -517,7 +524,7 @@ export function PublicAgentPage() {
                     {privacy.showEmail && (
                       <EndpointCard
                         title="User Email"
-                        value={`${normalizedUsername}@humanai.gent`}
+                        value={`${normalizedUsername}@humana.gent`}
                         icon={
                           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
@@ -527,7 +534,7 @@ export function PublicAgentPage() {
                     )}
                     <EndpointCard
                       title="Profile llms (aggregate)"
-                      value={`humanai.gent/${normalizedUsername}/llms.txt`}
+                      value={`humana.gent/${normalizedUsername}/llms.txt`}
                       icon={
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
@@ -536,7 +543,7 @@ export function PublicAgentPage() {
                     />
                     <EndpointCard
                       title="Profile llms full (aggregate)"
-                      value={`humanai.gent/${normalizedUsername}/llms-full.md`}
+                      value={`humana.gent/${normalizedUsername}/llms-full.md`}
                       icon={
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
@@ -545,7 +552,7 @@ export function PublicAgentPage() {
                     />
                     <EndpointCard
                       title="API Docs"
-                      value={`humanai.gent/api/v1/agents/${normalizedUsername}/docs.md`}
+                      value={`humana.gent/api/v1/agents/${normalizedUsername}/docs.md`}
                       icon={
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
@@ -554,7 +561,7 @@ export function PublicAgentPage() {
                     />
                     <EndpointCard
                       title="Tools Docs"
-                      value={`humanai.gent/api/v1/agents/${normalizedUsername}/tools.md`}
+                      value={`humana.gent/api/v1/agents/${normalizedUsername}/tools.md`}
                       icon={
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17l-5.384-3.19A.75.75 0 015 11.298V7.023a.75.75 0 011.036-.692l5.384 3.19a.75.75 0 01.036 1.318l-5.384 3.19a.75.75 0 01-1.036-.692V9.858" />
@@ -564,7 +571,7 @@ export function PublicAgentPage() {
                     />
                     <EndpointCard
                       title="OpenAPI Spec"
-                      value={`humanai.gent/api/v1/agents/${normalizedUsername}/openapi.json`}
+                      value={`humana.gent/api/v1/agents/${normalizedUsername}/openapi.json`}
                       icon={
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5" />
@@ -573,7 +580,7 @@ export function PublicAgentPage() {
                     />
                     <EndpointCard
                       title="Sitemap"
-                      value={`humanai.gent/${normalizedUsername}/sitemap.md`}
+                      value={`humana.gent/${normalizedUsername}/sitemap.md`}
                       icon={
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75V15m0 0l3-3m-3 3l-3-3M15 6.75V15m0 0l3-3m-3 3l-3-3" />
@@ -612,7 +619,7 @@ export function PublicAgentPage() {
                               {showApi && (
                                 <EndpointCard
                                   title="Agent API"
-                                  value={`humanai.gent/api/v1/agents/${normalizedUsername}/${agent.slug}/messages`}
+                                  value={`humana.gent/api/v1/agents/${normalizedUsername}/${agent.slug}/messages`}
                                   icon={
                                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                       <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -623,7 +630,7 @@ export function PublicAgentPage() {
                               {showMcp && (
                                 <EndpointCard
                                   title="Agent MCP"
-                                  value={`humanai.gent/mcp/u/${normalizedUsername}/${agent.slug}`}
+                                  value={`humana.gent/mcp/u/${normalizedUsername}/${agent.slug}`}
                                   icon={
                                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
@@ -645,7 +652,7 @@ export function PublicAgentPage() {
                               {showSkillFile && (
                                 <EndpointCard
                                   title="Agent Skill File"
-                                  value={`humanai.gent/u/${normalizedUsername}/${agent.slug}/skill.json`}
+                                  value={`humana.gent/u/${normalizedUsername}/${agent.slug}/skill.json`}
                                   icon={
                                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -655,7 +662,7 @@ export function PublicAgentPage() {
                               )}
                               <EndpointCard
                                 title="Agent llms (persona)"
-                                value={`humanai.gent/${normalizedUsername}/${agent.slug}/llms.txt`}
+                                value={`humana.gent/${normalizedUsername}/${agent.slug}/llms.txt`}
                                 icon={
                                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -664,7 +671,7 @@ export function PublicAgentPage() {
                               />
                               <EndpointCard
                                 title="Agent llms full (persona)"
-                                value={`humanai.gent/${normalizedUsername}/${agent.slug}/llms-full.md`}
+                                value={`humana.gent/${normalizedUsername}/${agent.slug}/llms-full.md`}
                                 icon={
                                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />

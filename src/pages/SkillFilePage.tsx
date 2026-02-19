@@ -4,6 +4,7 @@ import { api } from "../../convex/_generated/api";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
 import { Id } from "../../convex/_generated/dataModel";
 import { notify } from "../lib/notify";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 interface Capability {
   name: string;
@@ -168,6 +169,9 @@ export function SkillFilePage() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showImportForm, setShowImportForm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  useEscapeKey(() => setShowImportForm(false), showImportForm);
+  useEscapeKey(() => setShowCreateForm(false), showCreateForm && !showImportForm);
   const [newSkillName, setNewSkillName] = useState("");
   const [newSkillBio, setNewSkillBio] = useState("");
   const [createForAgents, setCreateForAgents] = useState<Id<"agents">[]>([]);
@@ -178,6 +182,7 @@ export function SkillFilePage() {
   const [importing, setImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
+  const [importSucceeded, setImportSucceeded] = useState(false);
 
   // Load skill data into form when currentSkill changes
   useEffect(() => {
@@ -322,6 +327,7 @@ export function SkillFilePage() {
     setImporting(true);
     setImportMessage(null);
     setImportWarnings([]);
+    setImportSucceeded(false);
 
     try {
       let payloads: ImportPayload[] = [];
@@ -355,11 +361,7 @@ export function SkillFilePage() {
 
       setImportWarnings(warnings);
       setImportMessage(`Imported ${totalImported} skill${totalImported === 1 ? "" : "s"} successfully.`);
-      setShowImportForm(false);
-      setImportUrl("");
-      setImportText("");
-      setImportFiles([]);
-      setCreateForAgents([]);
+      setImportSucceeded(true);
       notify.success(
         "Import complete",
         `Imported ${totalImported} skill${totalImported === 1 ? "" : "s"}.`
@@ -367,10 +369,30 @@ export function SkillFilePage() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Import failed";
       setImportMessage(message);
+      setImportSucceeded(false);
       notify.error("Import failed", error, "Could not import skills.");
     } finally {
       setImporting(false);
     }
+  }
+
+  function handleOpenImportForm() {
+    setShowImportForm(true);
+    setImportMode("url");
+    setImportUrl("");
+    setImportText("");
+    setImportFiles([]);
+    setCreateForAgents([]);
+    setImportMessage(null);
+    setImportWarnings([]);
+    setImportSucceeded(false);
+  }
+
+  function handleCloseImportForm() {
+    setShowImportForm(false);
+    setImportMessage(null);
+    setImportWarnings([]);
+    setImportSucceeded(false);
   }
 
   function addCapability() {
@@ -424,7 +446,7 @@ export function SkillFilePage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => setShowImportForm(true)} className="btn-secondary">
+            <button onClick={handleOpenImportForm} className="btn-secondary">
               Import
             </button>
             <button onClick={() => setShowCreateForm(true)} className="btn-accent">
@@ -529,18 +551,21 @@ export function SkillFilePage() {
               <div className="mt-4 flex gap-2">
                 <button
                   onClick={() => setImportMode("url")}
+                  disabled={importSucceeded}
                   className={`btn-secondary ${importMode === "url" ? "border-accent text-ink-0" : ""}`}
                 >
                   URL
                 </button>
                 <button
                   onClick={() => setImportMode("text")}
+                  disabled={importSucceeded}
                   className={`btn-secondary ${importMode === "text" ? "border-accent text-ink-0" : ""}`}
                 >
                   Paste text
                 </button>
                 <button
                   onClick={() => setImportMode("file")}
+                  disabled={importSucceeded}
                   className={`btn-secondary ${importMode === "file" ? "border-accent text-ink-0" : ""}`}
                 >
                   Files
@@ -555,6 +580,7 @@ export function SkillFilePage() {
                       type="url"
                       value={importUrl}
                       onChange={(e) => setImportUrl(e.target.value)}
+                      disabled={importSucceeded}
                       className="input mt-1.5"
                       placeholder="https://github.com/anthropics/skills"
                     />
@@ -570,6 +596,7 @@ export function SkillFilePage() {
                     <textarea
                       value={importText}
                       onChange={(e) => setImportText(e.target.value)}
+                      disabled={importSucceeded}
                       className="input mt-1.5 min-h-48 resize-y font-mono text-sm"
                       placeholder="Paste SKILL.md or JSON skill payload"
                     />
@@ -584,6 +611,7 @@ export function SkillFilePage() {
                       accept=".md,.json,text/markdown,application/json"
                       multiple
                       onChange={(e) => setImportFiles(Array.from(e.target.files ?? []))}
+                      disabled={importSucceeded}
                       className="input mt-1.5"
                     />
                     <p className="mt-1 text-xs text-ink-2">Supports .md and .json files.</p>
@@ -615,6 +643,7 @@ export function SkillFilePage() {
                                   : [...prev, agent._id]
                               )
                             }
+                            disabled={importSucceeded}
                             className="h-3.5 w-3.5 rounded border-surface-3 text-accent focus:ring-accent"
                           />
                           <span className="text-sm text-ink-0">{agent.name}</span>
@@ -626,12 +655,20 @@ export function SkillFilePage() {
               </div>
 
               <div className="mt-6 flex justify-end gap-3">
-                <button onClick={() => setShowImportForm(false)} className="btn-secondary">
-                  Cancel
-                </button>
-                <button onClick={handleImportSkills} disabled={importing} className="btn-accent">
-                  {importing ? "Importing..." : "Import"}
-                </button>
+                {importSucceeded ? (
+                  <button onClick={handleCloseImportForm} className="btn-secondary">
+                    Close
+                  </button>
+                ) : (
+                  <>
+                    <button onClick={handleCloseImportForm} className="btn-secondary">
+                      Cancel
+                    </button>
+                    <button onClick={handleImportSkills} disabled={importing} className="btn-accent">
+                      {importing ? "Importing..." : "Import"}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>

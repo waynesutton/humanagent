@@ -122,6 +122,7 @@ export const getAgentConfig = internalQuery({
 
     let llmConfig = user.llmConfig;
     let agentName = user.name ?? "Agent";
+    let customInstructions: string | undefined;
 
     // Override with agent-specific config if provided
     if (args.agentId) {
@@ -130,6 +131,7 @@ export const getAgentConfig = internalQuery({
         llmConfig = agent.llmConfig;
         agentName = agent.name;
       }
+      customInstructions = agent?.personality?.customInstructions;
     }
 
     // Get active skills for capabilities (filter by isActive in code since it's optional)
@@ -161,7 +163,8 @@ export const getAgentConfig = internalQuery({
       capabilities.length > 0
         ? capabilities
         : ["General assistance", "Answer questions", "Help with tasks"],
-      restrictions
+      restrictions,
+      customInstructions
     );
 
     return {
@@ -337,6 +340,66 @@ export const saveMemory = internalMutation({
 });
 
 /**
+ * Save an agent thought/reasoning entry
+ */
+export const saveThought = internalMutation({
+  args: {
+    userId: v.id("users"),
+    agentId: v.id("agents"),
+    type: v.union(
+      v.literal("observation"),
+      v.literal("reasoning"),
+      v.literal("decision"),
+      v.literal("reflection"),
+      v.literal("goal_update")
+    ),
+    content: v.string(),
+    context: v.optional(v.string()),
+    relatedTaskId: v.optional(v.id("tasks")),
+  },
+  returns: v.id("agentThoughts"),
+  handler: async (ctx, args) => {
+    return await ctx.db.insert("agentThoughts", {
+      userId: args.userId,
+      agentId: args.agentId,
+      type: args.type,
+      content: args.content,
+      context: args.context,
+      relatedTaskId: args.relatedTaskId,
+      createdAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Look up an agent by slug within a user's agents
+ */
+export const getAgentBySlug = internalQuery({
+  args: {
+    userId: v.id("users"),
+    slug: v.string(),
+  },
+  returns: v.union(
+    v.object({
+      _id: v.id("agents"),
+      name: v.string(),
+      slug: v.string(),
+    }),
+    v.null()
+  ),
+  handler: async (ctx, args) => {
+    const agent = await ctx.db
+      .query("agents")
+      .withIndex("by_userId_slug", (q) =>
+        q.eq("userId", args.userId).eq("slug", args.slug)
+      )
+      .unique();
+    if (!agent) return null;
+    return { _id: agent._id, name: agent.name, slug: agent.slug };
+  },
+});
+
+/**
  * Log an agent action to the audit trail
  */
 export const logAgentAction = internalMutation({
@@ -415,5 +478,113 @@ export const updateTokenUsage = internalMutation({
     }
 
     return null;
+  },
+});
+
+/**
+ * Get the default agent ID for a user (used when no specific agent is provided).
+ */
+export const getDefaultAgentId = internalQuery({
+  args: {
+    userId: v.id("users"),
+  },
+  returns: v.id("agents"),
+  handler: async (ctx, args) => {
+    const defaultAgent = await ctx.db
+      .query("agents")
+      .withIndex("by_userId_default", (q) =>
+        q.eq("userId", args.userId).eq("isDefault", true)
+      )
+      .first();
+
+    if (defaultAgent) return defaultAgent._id;
+
+    // Fallback: any agent belonging to this user
+    const anyAgent = await ctx.db
+      .query("agents")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .first();
+
+    if (!anyAgent) throw new Error("No agents found for user");
+    return anyAgent._id;
+  },
+});
+
+/**
+ * Get voice credentials and config for a specific agent.
+ * Runs in V8 (not Node.js) so it can be used by Node.js actions via ctx.runQuery.
+ */
+export const getVoiceConfig = internalQuery({
+  args: {
+    userId: v.id("users"),
+    agentId: v.id("agents"),
+  },
+  returns: v.union(
+    v.object({
+      provider: v.union(v.literal("elevenlabs"), v.literal("openai")),
+      apiKey: v.string(),
+      voiceId: v.optional(v.string()),
+      modelId: v.optional(v.string()),
+      stability: v.optional(v.number()),
+      similarityBoost: v.optional(v.number()),
+      style: v.optional(v.number()),
+      useSpeakerBoost: v.optional(v.boolean()),
+      openaiVoice: v.optional(v.string()),
+    }),
+    v.null()
+  ),
+  handler: async (ctx, args) => {
+    const agent = await ctx.db.get(args.agentId);
+    if (!agent || agent.userId !== args.userId) return null;
+
+    const voiceConfig = agent.voiceConfig;
+    const provider = voiceConfig?.provider ?? "openai";
+
+    function decodeKey(encoded: string): string {
+      try {
+        return atob(encoded);
+      } catch {
+        return encoded;
+      }
+    }
+
+    const service = provider === "elevenlabs" ? "elevenlabs" : "openai";
+    const credential = await ctx.db
+      .query("userCredentials")
+      .withIndex("by_userId_service", (q) =>
+        q.eq("userId", args.userId).eq("service", service)
+      )
+      .unique();
+
+    if (!credential?.encryptedApiKey || !credential.isActive) {
+      if (provider === "elevenlabs") {
+        const openaiCred = await ctx.db
+          .query("userCredentials")
+          .withIndex("by_userId_service", (q) =>
+            q.eq("userId", args.userId).eq("service", "openai")
+          )
+          .unique();
+        if (openaiCred?.encryptedApiKey && openaiCred.isActive) {
+          return {
+            provider: "openai" as const,
+            apiKey: decodeKey(openaiCred.encryptedApiKey),
+            openaiVoice: voiceConfig?.openaiVoice ?? "nova",
+          };
+        }
+      }
+      return null;
+    }
+
+    return {
+      provider,
+      apiKey: decodeKey(credential.encryptedApiKey),
+      voiceId: voiceConfig?.voiceId,
+      modelId: voiceConfig?.modelId,
+      stability: voiceConfig?.stability,
+      similarityBoost: voiceConfig?.similarityBoost,
+      style: voiceConfig?.style,
+      useSpeakerBoost: voiceConfig?.useSpeakerBoost,
+      openaiVoice: voiceConfig?.openaiVoice ?? "nova",
+    };
   },
 });

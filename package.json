@@ -13,7 +13,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "deploy": "convex deploy --cmd 'npm run build'",
-    "auth:setup": "npx @robelest/convex-auth --site-url http://localhost:5173",
+    "auth:setup": "npx @robelest/convex-auth --site-url http://localhost:5174",
     "auth:portal:upload": "npx @robelest/convex-auth portal upload",
     "auth:portal:link": "npx @robelest/convex-auth portal link"
   },

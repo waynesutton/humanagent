@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useAction, useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
 import { Doc, Id } from "../../convex/_generated/dataModel";
@@ -11,6 +11,7 @@ import {
   UserCircle,
 } from "@phosphor-icons/react";
 import { notify } from "../lib/notify";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 // Agent type from schema
 type Agent = Doc<"agents">;
@@ -43,6 +44,20 @@ type OpenRouterModel = {
   id: string;
   name?: string;
   description?: string;
+};
+
+type ModelOption = {
+  id: string;
+  label: string;
+};
+
+type ModelCatalogResult = {
+  provider: ProviderType;
+  models: Array<ModelOption>;
+  source: "live" | "fallback" | "empty";
+  fetchedAt: number;
+  hasCredential: boolean;
+  error?: string;
 };
 
 // Keep this map in sync with LLM_PROVIDERS when adding/removing providers.
@@ -119,6 +134,7 @@ const AGENT_ICON_OPTIONS: Array<{
 
 export function AgentsPage() {
   const agents = useQuery(api.functions.agents.list);
+  const viewer = useQuery(api.functions.users.viewer);
   const credentials = useQuery(api.functions.credentials.getLLMProviderStatus);
   const createAgent = useMutation(api.functions.agents.create);
   const updateAgent = useMutation(api.functions.agents.update);
@@ -128,6 +144,8 @@ export function AgentsPage() {
     api.functions.agents.generateAgentPhotoUploadUrl
   );
   const setAgentPhoto = useMutation(api.functions.agents.setAgentPhoto);
+  const refreshModelCatalog = useAction(api.functions.credentials.refreshModelCatalog);
+  const listVoices = useAction(api.functions.voice.listVoices);
 
   // Create agent form
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -150,6 +168,7 @@ export function AgentsPage() {
   const [editA2aAllowPublicAgents, setEditA2aAllowPublicAgents] = useState(false);
   const [editA2aAutoRespond, setEditA2aAutoRespond] = useState(true);
   const [editA2aMaxAutoReplyHops, setEditA2aMaxAutoReplyHops] = useState(2);
+  const [editUseAccountDefaultLlm, setEditUseAccountDefaultLlm] = useState(true);
   const [editProvider, setEditProvider] = useState<ProviderType>("openrouter");
   const [editModel, setEditModel] = useState("");
   const [editAgentEmail, setEditAgentEmail] = useState("");
@@ -188,21 +207,107 @@ export function AgentsPage() {
   const [editXCanMonitor, setEditXCanMonitor] = useState(true);
   const [editXAutoPostEnabled, setEditXAutoPostEnabled] = useState(false);
   const [editXAutoPostRequireApproval, setEditXAutoPostRequireApproval] = useState(true);
+  // ElevenLabs voice list for picker
+  type ElevenLabsVoiceOption = {
+    voiceId: string;
+    name: string;
+    category?: string;
+    accent?: string;
+    gender?: string;
+    previewUrl?: string;
+  };
+  const [elevenLabsVoices, setElevenLabsVoices] = useState<Array<ElevenLabsVoiceOption>>([]);
+  const [isLoadingVoices, setIsLoadingVoices] = useState(false);
+  const voicesLoadedRef = useRef(false);
+  const voicePreviewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [previewingVoiceId, setPreviewingVoiceId] = useState<string | null>(null);
+
+  const loadElevenLabsVoices = useCallback(async () => {
+    if (voicesLoadedRef.current || isLoadingVoices) return;
+    setIsLoadingVoices(true);
+    try {
+      const voices = await listVoices({});
+      setElevenLabsVoices(voices);
+      voicesLoadedRef.current = true;
+    } catch (error) {
+      console.error("Failed to load ElevenLabs voices:", error);
+    } finally {
+      setIsLoadingVoices(false);
+    }
+  }, [listVoices, isLoadingVoices]);
+
+  function handlePreviewVoice(previewUrl?: string, voiceId?: string) {
+    if (voicePreviewAudioRef.current) {
+      voicePreviewAudioRef.current.pause();
+      voicePreviewAudioRef.current = null;
+    }
+    if (previewingVoiceId === voiceId) {
+      setPreviewingVoiceId(null);
+      return;
+    }
+    if (!previewUrl) return;
+    setPreviewingVoiceId(voiceId ?? null);
+    const audio = new Audio(previewUrl);
+    voicePreviewAudioRef.current = audio;
+    audio.addEventListener("ended", () => setPreviewingVoiceId(null));
+    audio.addEventListener("error", () => setPreviewingVoiceId(null));
+    void audio.play();
+  }
+
   const [showModelHelpModal, setShowModelHelpModal] = useState(false);
   const [openRouterModels, setOpenRouterModels] = useState<Array<OpenRouterModel>>([]);
   const [isLoadingOpenRouterModels, setIsLoadingOpenRouterModels] = useState(false);
   const [openRouterModelLoadError, setOpenRouterModelLoadError] = useState<string | null>(null);
+  const [isRefreshingProviderModels, setIsRefreshingProviderModels] = useState(false);
+  const modelCatalog = useQuery(api.functions.credentials.getModelCatalog, {
+    provider: editProvider,
+  }) as ModelCatalogResult | undefined;
   const [saving, setSaving] = useState(false);
   const [photoUploading, setPhotoUploading] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
+  const [pendingDeleteAgentId, setPendingDeleteAgentId] = useState<Id<"agents"> | null>(null);
+  const [deletingAgent, setDeletingAgent] = useState(false);
 
   // Check if various services are configured
   const hasTwilioKey = credentials?.twilio?.configured ?? false;
+  const hasTelnyxKey = credentials?.telnyx?.configured ?? false;
+  const hasPlivoKey = credentials?.plivo?.configured ?? false;
+  const hasVapiKey = credentials?.vapi?.configured ?? false;
   const hasElevenLabsKey = credentials?.elevenlabs?.configured ?? false;
   const hasFirecrawlKey = credentials?.firecrawl?.configured ?? false;
   const hasBrowserbaseKey = credentials?.browserbase?.configured ?? false;
   const hasXaiKey = credentials?.xai?.configured ?? false;
   const hasTwitterKey = credentials?.twitter?.configured ?? false;
+  const hasPhoneProviderKey = hasTwilioKey || hasTelnyxKey || hasPlivoKey || hasVapiKey;
+
+  useEscapeKey(() => setShowModelHelpModal(false), showModelHelpModal);
+  useEscapeKey(() => setPendingDeleteAgentId(null), !!pendingDeleteAgentId && !showModelHelpModal);
+
+  function providerHasConfiguredKey(provider: ProviderType): boolean {
+    return credentials?.[provider]?.configured ?? false;
+  }
+
+  useEffect(() => {
+    if (!editingAgent || editUseAccountDefaultLlm) return;
+    if (!providerHasConfiguredKey(editProvider)) return;
+    if (modelCatalog && modelCatalog.models.length > 0) return;
+
+    setIsRefreshingProviderModels(true);
+    void refreshModelCatalog({ provider: editProvider })
+      .catch((error: unknown) => {
+        console.error("Failed to refresh provider models:", error);
+      })
+      .finally(() => {
+        setIsRefreshingProviderModels(false);
+      });
+  }, [
+    editingAgent,
+    editProvider,
+    editUseAccountDefaultLlm,
+    modelCatalog,
+    refreshModelCatalog,
+    credentials,
+  ]);
 
   // Auto-generate slug from name
   function handleNameChange(name: string) {
@@ -288,8 +393,23 @@ export function AgentsPage() {
     setEditA2aAllowPublicAgents(a2aConfig?.allowPublicAgents ?? false);
     setEditA2aAutoRespond(a2aConfig?.autoRespond ?? true);
     setEditA2aMaxAutoReplyHops(a2aConfig?.maxAutoReplyHops ?? 2);
-    setEditProvider((agent.llmConfig?.provider as ProviderType) || "openrouter");
-    setEditModel(agent.llmConfig?.model || "anthropic/claude-sonnet-4");
+    const userProvider = (viewer?.llmConfig?.provider as ProviderType) || "openrouter";
+    const userModel = viewer?.llmConfig?.model || "anthropic/claude-sonnet-4";
+    const usesAgentOverride = !!agent.llmConfig;
+    setEditUseAccountDefaultLlm(!usesAgentOverride);
+    const selectedProvider = (agent.llmConfig?.provider as ProviderType) || userProvider;
+    setEditProvider(selectedProvider);
+    setEditModel(agent.llmConfig?.model || userModel);
+    if (providerHasConfiguredKey(selectedProvider)) {
+      setIsRefreshingProviderModels(true);
+      void refreshModelCatalog({ provider: selectedProvider })
+        .catch((error: unknown) => {
+          console.error("Failed to refresh provider models:", error);
+        })
+        .finally(() => {
+          setIsRefreshingProviderModels(false);
+        });
+    }
     setEditAgentEmail(agent.agentEmail || "");
     setEditAgentPhone(agent.agentPhone || "");
     // Phone config
@@ -298,9 +418,14 @@ export function AgentsPage() {
     setEditPhoneSmsEnabled(phoneConfig?.smsEnabled ?? true);
     // Voice config
     const voiceConfig = (agent as { voiceConfig?: { provider?: string; voiceId?: string; openaiVoice?: string } }).voiceConfig;
-    setEditVoiceProvider((voiceConfig?.provider as "elevenlabs" | "openai") || "openai");
+    const selectedVoiceProvider = (voiceConfig?.provider as "elevenlabs" | "openai") || "openai";
+    setEditVoiceProvider(selectedVoiceProvider);
     setEditElevenLabsVoiceId(voiceConfig?.voiceId || "");
     setEditOpenaiVoice(voiceConfig?.openaiVoice || "nova");
+    // Load voices if ElevenLabs is the provider
+    if (selectedVoiceProvider === "elevenlabs" && hasElevenLabsKey) {
+      void loadElevenLabsVoices();
+    }
     // Personality config
     const personality = (agent as { personality?: { tone?: string; speakingStyle?: string; customInstructions?: string } }).personality;
     setEditPersonalityTone(personality?.tone || "friendly");
@@ -359,12 +484,15 @@ export function AgentsPage() {
           autoRespond: editA2aAutoRespond,
           maxAutoReplyHops: Math.max(0, Math.min(8, editA2aMaxAutoReplyHops)),
         },
-        llmConfig: {
-          provider: editProvider,
-          model: editModel,
-          tokensUsedThisMonth: 0,
-          tokenBudget: 100000,
-        },
+        useAccountDefaultLlm: editUseAccountDefaultLlm,
+        llmConfig: editUseAccountDefaultLlm
+          ? undefined
+          : {
+              provider: editProvider,
+              model: editModel,
+              tokensUsedThisMonth: 0,
+              tokenBudget: 100000,
+            },
         agentEmail: editAgentEmail.trim() || undefined,
         agentPhone: editAgentPhone.trim() || undefined,
         // Phone config (without voice, voice is now in voiceConfig)
@@ -495,19 +623,21 @@ export function AgentsPage() {
   }
 
   async function handleDeleteAgent(agentId: Id<"agents">) {
-    notify.confirmAction({
-      title: "Delete this agent?",
-      description: "This also deletes all associated skills.",
-      buttonTitle: "Delete",
-      onConfirm: async () => {
-        try {
-          await deleteAgent({ agentId });
-          notify.success("Agent deleted");
-        } catch (error) {
-          notify.error("Could not delete agent", error);
-        }
-      },
-    });
+    setPendingDeleteAgentId(agentId);
+  }
+
+  async function confirmDeleteAgent() {
+    if (!pendingDeleteAgentId) return;
+    setDeletingAgent(true);
+    try {
+      await deleteAgent({ agentId: pendingDeleteAgentId });
+      notify.success("Agent deleted");
+      setPendingDeleteAgentId(null);
+    } catch (error) {
+      notify.error("Could not delete agent", error);
+    } finally {
+      setDeletingAgent(false);
+    }
   }
 
   async function handleSetDefault(agentId: Id<"agents">) {
@@ -542,6 +672,19 @@ export function AgentsPage() {
     } finally {
       setIsLoadingOpenRouterModels(false);
     }
+  }
+
+  function handleEditProviderChange(provider: ProviderType) {
+    setEditProvider(provider);
+    if (!providerHasConfiguredKey(provider)) return;
+    setIsRefreshingProviderModels(true);
+    void refreshModelCatalog({ provider })
+      .catch((error: unknown) => {
+        console.error("Failed to refresh provider models:", error);
+      })
+      .finally(() => {
+        setIsRefreshingProviderModels(false);
+      });
   }
 
   if (!agents) {
@@ -595,7 +738,7 @@ export function AgentsPage() {
               <div>
                 <label className="block text-sm font-medium text-ink-0">Slug</label>
                 <div className="flex items-center gap-2 mt-1.5">
-                  <span className="text-sm text-ink-2">humanai.gent/username/</span>
+                  <span className="text-sm text-ink-2">humana.gent/username/</span>
                   <input
                     type="text"
                     value={newAgentSlug}
@@ -871,23 +1014,49 @@ export function AgentsPage() {
 
                     <div className="border-t border-surface-3 pt-4">
                       <h4 className="text-sm font-medium text-ink-0">LLM Configuration (BYOK)</h4>
+                      <p className="mt-1 text-xs text-ink-2">
+                        Settings defines your default provider and model. Use an agent override only when this agent needs a different model.
+                      </p>
+                      <div className="mt-3 rounded-lg border border-surface-3 bg-surface-1 p-3">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={editUseAccountDefaultLlm}
+                            onChange={(e) => setEditUseAccountDefaultLlm(e.target.checked)}
+                            className="h-4 w-4 rounded border-surface-3 text-accent focus:ring-accent"
+                          />
+                          <span className="text-sm text-ink-0">Use account default from Settings</span>
+                        </label>
+                        {editUseAccountDefaultLlm ? (
+                          <p className="mt-2 text-xs text-ink-2">
+                            Current default: {viewer?.llmConfig?.provider ?? "openrouter"} / {viewer?.llmConfig?.model ?? "anthropic/claude-sonnet-4"}
+                          </p>
+                        ) : null}
+                      </div>
                       <div className="mt-3 grid gap-4 sm:grid-cols-2">
                         <div>
                           <label className="block text-sm text-ink-1">Provider</label>
                           <select
                             value={editProvider}
-                            onChange={(e) => setEditProvider(e.target.value as ProviderType)}
+                            onChange={(e) => handleEditProviderChange(e.target.value as ProviderType)}
                             className="input mt-1"
+                            disabled={editUseAccountDefaultLlm}
                           >
                             {LLM_PROVIDERS.map((p) => {
-                              const hasKey = credentials?.[p.id]?.configured;
+                              const hasKey = providerHasConfiguredKey(p.id);
+                              const shouldDisable = !hasKey && p.id !== editProvider;
                               return (
-                                <option key={p.id} value={p.id}>
+                                <option key={p.id} value={p.id} disabled={shouldDisable}>
                                   {p.name} {hasKey ? "(key configured)" : "(needs BYOK)"}
                                 </option>
                               );
                             })}
                           </select>
+                          {!editUseAccountDefaultLlm && !providerHasConfiguredKey(editProvider) ? (
+                            <p className="mt-1 text-xs text-amber-500">
+                              This provider is not configured. Add its API key in Settings or switch provider.
+                            </p>
+                          ) : null}
                         </div>
                         <div>
                           <div className="flex items-center justify-between">
@@ -905,10 +1074,37 @@ export function AgentsPage() {
                             value={editModel}
                             onChange={(e) => setEditModel(e.target.value)}
                             className="input mt-1"
-                            placeholder="gpt-4o or glm-5"
+                            placeholder="gpt-5.2, gpt-5-mini, or any provider model ID"
+                            disabled={editUseAccountDefaultLlm}
+                            list={
+                              !editUseAccountDefaultLlm &&
+                              providerHasConfiguredKey(editProvider) &&
+                              (modelCatalog?.models?.length ?? 0) > 0
+                                ? "agent-llm-model-suggestions"
+                                : undefined
+                            }
                           />
+                          {!editUseAccountDefaultLlm &&
+                          providerHasConfiguredKey(editProvider) &&
+                          (modelCatalog?.models?.length ?? 0) > 0 ? (
+                            <datalist id="agent-llm-model-suggestions">
+                              {modelCatalog?.models.map((model) => (
+                                <option key={model.id} value={model.id}>
+                                  {model.label}
+                                </option>
+                              ))}
+                            </datalist>
+                          ) : null}
+                          {isRefreshingProviderModels && !editUseAccountDefaultLlm ? (
+                            <p className="mt-1 text-xs text-ink-2">Loading available models...</p>
+                          ) : null}
+                          {modelCatalog?.error && !editUseAccountDefaultLlm ? (
+                            <p className="mt-1 text-xs text-amber-500">
+                              Could not load live model list. Showing fallback options.
+                            </p>
+                          ) : null}
                           <p className="mt-1 text-xs text-ink-2">
-                            Supports provider-native model names, including `glm-5` with OpenAI-compatible endpoints.
+                            Supports provider-native model names, including GPT-5 IDs and `glm-5` with OpenAI-compatible endpoints.
                           </p>
                         </div>
                       </div>
@@ -924,7 +1120,7 @@ export function AgentsPage() {
                             value={editAgentEmail}
                             onChange={(e) => setEditAgentEmail(e.target.value)}
                             className="input mt-1"
-                            placeholder="agent@humanai.gent"
+                            placeholder="agent@humana.gent"
                           />
                           <p className="mt-1 text-xs text-ink-2">
                             {credentials?.agentmail?.configured
@@ -933,29 +1129,29 @@ export function AgentsPage() {
                           </p>
                         </div>
                         <div>
-                          <label className="block text-sm text-ink-1">Agent Phone Number (Twilio)</label>
+                          <label className="block text-sm text-ink-1">Agent Phone Number (Twilio / Telnyx / Plivo / Vapi)</label>
                           <input
                             type="tel"
                             value={editAgentPhone}
                             onChange={(e) => setEditAgentPhone(e.target.value)}
                             className="input mt-1"
                             placeholder="+1 (555) 123-4567"
-                            disabled={!hasTwilioKey}
+                            disabled={!hasPhoneProviderKey}
                           />
-                          {!hasTwilioKey ? (
+                          {!hasPhoneProviderKey ? (
                             <p className="mt-1 text-xs text-amber-500">
-                              Configure your Twilio API key in Settings first
+                              Configure a phone provider key in Settings first (Twilio, Telnyx, Plivo, or Vapi)
                             </p>
                           ) : (
                             <p className="mt-1 text-xs text-ink-2">
-                              Enter your Twilio phone number or provision one below
+                              Enter your phone number for the provider you configured in Settings
                             </p>
                           )}
                         </div>
                       </div>
 
-                      {/* Phone configuration (only shown if Twilio is configured) */}
-                      {hasTwilioKey && editAgentPhone && (
+                      {/* Phone configuration (only shown if a phone provider is configured) */}
+                      {hasPhoneProviderKey && editAgentPhone && (
                         <div className="mt-4 rounded-lg border border-surface-3 bg-surface-1 p-4">
                           <h4 className="text-sm font-medium text-ink-0">Phone Settings</h4>
                           <div className="mt-3 flex flex-wrap gap-4">
@@ -990,7 +1186,13 @@ export function AgentsPage() {
                             <label className="block text-sm text-ink-1">Voice Provider</label>
                             <select
                               value={editVoiceProvider}
-                              onChange={(e) => setEditVoiceProvider(e.target.value as "elevenlabs" | "openai")}
+                              onChange={(e) => {
+                                const provider = e.target.value as "elevenlabs" | "openai";
+                                setEditVoiceProvider(provider);
+                                if (provider === "elevenlabs" && hasElevenLabsKey && elevenLabsVoices.length === 0) {
+                                  void loadElevenLabsVoices();
+                                }
+                              }}
                               className="input mt-1"
                             >
                               <option value="openai">OpenAI TTS {!credentials?.openai?.configured && "(default)"}</option>
@@ -1017,19 +1219,94 @@ export function AgentsPage() {
                             </div>
                           ) : (
                             <div>
-                              <label className="block text-sm text-ink-1">ElevenLabs Voice ID</label>
-                              <input
-                                type="text"
-                                value={editElevenLabsVoiceId}
-                                onChange={(e) => setEditElevenLabsVoiceId(e.target.value)}
-                                className="input mt-1"
-                                placeholder="e.g., EXAVITQu4vr4xnSDxMaL"
-                                disabled={!hasElevenLabsKey}
-                              />
-                              {!hasElevenLabsKey && (
+                              <div className="flex items-center justify-between">
+                                <label className="block text-sm text-ink-1">ElevenLabs Voice</label>
+                                {hasElevenLabsKey && elevenLabsVoices.length === 0 && !isLoadingVoices && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void loadElevenLabsVoices()}
+                                    className="text-xs text-accent hover:underline"
+                                  >
+                                    Load voices
+                                  </button>
+                                )}
+                              </div>
+                              {!hasElevenLabsKey ? (
                                 <p className="mt-1 text-xs text-amber-500">
                                   Configure your ElevenLabs API key in Settings
                                 </p>
+                              ) : isLoadingVoices ? (
+                                <div className="mt-1 flex items-center gap-2 text-xs text-ink-2">
+                                  <div className="h-3 w-3 animate-spin rounded-full border-2 border-surface-3 border-t-accent" />
+                                  Loading voices...
+                                </div>
+                              ) : elevenLabsVoices.length > 0 ? (
+                                <>
+                                  <select
+                                    value={editElevenLabsVoiceId}
+                                    onChange={(e) => setEditElevenLabsVoiceId(e.target.value)}
+                                    className="input mt-1"
+                                  >
+                                    <option value="">Select a voice</option>
+                                    {elevenLabsVoices.map((voice) => (
+                                      <option key={voice.voiceId} value={voice.voiceId}>
+                                        {voice.name}
+                                        {voice.gender ? ` (${voice.gender})` : ""}
+                                        {voice.accent ? ` / ${voice.accent}` : ""}
+                                        {voice.category ? ` [${voice.category}]` : ""}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {editElevenLabsVoiceId && (
+                                    <div className="mt-2 flex items-center gap-2">
+                                      <p className="text-xs text-ink-2 font-mono">
+                                        {editElevenLabsVoiceId}
+                                      </p>
+                                      {(() => {
+                                        const selected = elevenLabsVoices.find(
+                                          (v) => v.voiceId === editElevenLabsVoiceId
+                                        );
+                                        return selected?.previewUrl ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => handlePreviewVoice(selected.previewUrl, selected.voiceId)}
+                                            className={`rounded p-1 transition-colors ${
+                                              previewingVoiceId === selected.voiceId
+                                                ? "text-accent bg-accent/10"
+                                                : "text-ink-2 hover:text-ink-0 hover:bg-surface-2"
+                                            }`}
+                                            title={previewingVoiceId === selected.voiceId ? "Stop preview" : "Preview voice"}
+                                          >
+                                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                              <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                                            </svg>
+                                          </button>
+                                        ) : null;
+                                      })()}
+                                    </div>
+                                  )}
+                                </>
+                              ) : (
+                                <>
+                                  <input
+                                    type="text"
+                                    value={editElevenLabsVoiceId}
+                                    onChange={(e) => setEditElevenLabsVoiceId(e.target.value)}
+                                    className="input mt-1"
+                                    placeholder="Voice ID (e.g., EXAVITQu4vr4xnSDxMaL)"
+                                  />
+                                  <p className="mt-1 text-xs text-ink-2">
+                                    Find Voice IDs at{" "}
+                                    <a
+                                      href="https://elevenlabs.io/app/voice-library"
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-accent hover:underline"
+                                    >
+                                      elevenlabs.io/app/voice-library
+                                    </a>
+                                  </p>
+                                </>
                               )}
                             </div>
                           )}
@@ -1086,6 +1363,12 @@ export function AgentsPage() {
                       <div className="mt-4 rounded-lg border border-surface-3 bg-surface-1 p-4">
                         <h4 className="text-sm font-medium text-ink-0">Scheduling</h4>
                         <p className="text-xs text-ink-2 mt-1">Configure when this agent runs automatically</p>
+                        <p className="text-xs text-ink-2 mt-1">
+                          Need account-level cron jobs too? Manage them in{" "}
+                          <a href="/settings#settings-cron-jobs" className="text-accent hover:underline">
+                            Settings
+                          </a>.
+                        </p>
                         <div className="mt-3 grid gap-4 sm:grid-cols-2">
                           <div>
                             <label className="block text-sm text-ink-1">Run Mode</label>
@@ -1415,19 +1698,42 @@ export function AgentsPage() {
                             Public
                           </span>
                         )}
+                        {agent.llmConfig &&
+                          !providerHasConfiguredKey(agent.llmConfig.provider as ProviderType) && (
+                            <span className="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
+                              LLM key missing
+                            </span>
+                          )}
+                        {!agent.llmConfig &&
+                          viewer?.llmConfig &&
+                          !providerHasConfiguredKey(viewer.llmConfig.provider as ProviderType) && (
+                            <span className="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
+                              Default LLM key missing
+                            </span>
+                          )}
                       </div>
                       {agent.description && (
                         <p className="mt-1 text-sm text-ink-1">{agent.description}</p>
                       )}
                       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-2">
                         <span>Slug: {agent.slug}</span>
-                        {agent.llmConfig && (
+                        {agent.llmConfig ? (
                           <span>
-                            LLM: {agent.llmConfig.provider}/{agent.llmConfig.model.split("/").pop()}
+                            LLM: {agent.llmConfig.provider}/{agent.llmConfig.model.split("/").pop()} (override)
+                          </span>
+                        ) : (
+                          <span>
+                            LLM: {viewer?.llmConfig?.provider ?? "openrouter"}/
+                            {(viewer?.llmConfig?.model ?? "anthropic/claude-sonnet-4").split("/").pop()} (account default)
                           </span>
                         )}
                         {agent.agentEmail && <span>Email: {agent.agentEmail}</span>}
                         {agent.agentPhone && <span>Phone: {agent.agentPhone}</span>}
+                        {(agent as { voiceConfig?: { provider?: string; voiceId?: string; openaiVoice?: string } }).voiceConfig?.provider && (
+                          <span>
+                            Voice: {(agent as { voiceConfig?: { provider?: string } }).voiceConfig?.provider === "elevenlabs" ? "ElevenLabs" : "OpenAI"}
+                          </span>
+                        )}
                       </div>
                       </div>
                     </div>
@@ -1477,8 +1783,9 @@ export function AgentsPage() {
             <h3 className="text-sm font-medium text-ink-0">About multiple agents</h3>
             <ul className="mt-2 space-y-1 text-sm text-ink-1">
               <li>Each agent can have its own LLM configuration, skills, email inbox, and phone number</li>
+              <li>Use "Use account default" for most agents, and only set an override when one agent needs a different provider/model</li>
               <li>Skills can be assigned to specific agents or shared across all agents</li>
-              <li>Configure API keys for AgentMail and Twilio in Settings to enable communication features</li>
+              <li>Configure API keys for AgentMail and at least one phone provider (Twilio, Telnyx, Plivo, or Vapi) in Settings to enable communication features</li>
               <li>The default agent is used when no specific agent is specified in API calls</li>
             </ul>
           </div>
@@ -1486,10 +1793,10 @@ export function AgentsPage() {
           <div className="rounded-lg border border-surface-3 bg-surface-1 p-4">
             <h3 className="text-sm font-medium text-ink-0">Setting up a phone number</h3>
             <ol className="mt-2 space-y-1 text-sm text-ink-1 list-decimal list-inside">
-              <li>Create a <a href="https://www.twilio.com/try-twilio" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">Twilio account</a> if you do not have one</li>
-              <li>Purchase a phone number from your <a href="https://console.twilio.com/us1/develop/phone-numbers/manage/incoming" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">Twilio console</a> (choose one with Voice and SMS capabilities)</li>
-              <li>Add your Twilio credentials (Account SID:Auth Token) in <a href="/settings" className="text-accent hover:underline">Settings</a></li>
-              <li>Enter the purchased phone number in your agent configuration above</li>
+              <li>Create an account with your preferred provider: <a href="https://www.twilio.com/try-twilio" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">Twilio</a>, <a href="https://portal.telnyx.com/" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">Telnyx</a>, <a href="https://console.plivo.com/" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">Plivo</a>, or <a href="https://dashboard.vapi.ai" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">Vapi</a></li>
+              <li>Provision a phone number in that provider with the capabilities your agent needs (voice, SMS, or both)</li>
+              <li>Add the provider credentials in <a href="/settings" className="text-accent hover:underline">Settings</a></li>
+              <li>Enter the purchased number in your agent configuration above</li>
               <li>Configure voice settings (voice type, SMS, etc.) to customize how your agent handles calls</li>
             </ol>
             <p className="mt-3 text-xs text-ink-2">
@@ -1504,7 +1811,7 @@ export function AgentsPage() {
             onClick={() => setShowModelHelpModal(false)}
           >
             <div
-              className="mx-4 w-full max-w-3xl max-h-[85vh] animate-fade-in card overflow-hidden"
+              className="mx-4 flex w-full max-w-3xl max-h-[85vh] flex-col animate-fade-in card overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-start justify-between gap-3 border-b border-surface-3 pb-3">
@@ -1526,7 +1833,7 @@ export function AgentsPage() {
                 </button>
               </div>
 
-              <div className="mt-4 space-y-4 overflow-y-auto pr-1">
+              <div className="mt-4 min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
                 <div className="rounded-lg border border-surface-3 bg-surface-1 p-4">
                   <div className="flex items-center justify-between gap-2">
                     <h4 className="text-sm font-medium text-ink-0">Provider model docs</h4>
@@ -1606,6 +1913,35 @@ export function AgentsPage() {
                   className="btn-secondary text-sm"
                 >
                   Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {pendingDeleteAgentId && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+            <div className="card mx-4 w-full max-w-md">
+              <h3 className="font-semibold text-ink-0">Delete this agent?</h3>
+              <p className="mt-2 text-sm text-ink-1">
+                This also deletes all associated skills.
+              </p>
+              <div className="mt-6 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPendingDeleteAgentId(null)}
+                  className="btn-secondary"
+                  disabled={deletingAgent}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void confirmDeleteAgent()}
+                  className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                  disabled={deletingAgent}
+                >
+                  {deletingAgent ? "Deleting..." : "Delete"}
                 </button>
               </div>
             </div>

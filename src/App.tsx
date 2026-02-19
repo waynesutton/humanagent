@@ -155,8 +155,8 @@ export default function App() {
   return (
     <>
       <Toaster
-        position="top-right"
-        options={{ roundness: 1 }}
+        position="bottom-right"
+        options={{ roundness: 18 }}
       />
       <Suspense fallback={<RouteLoader />}>
         <Routes>

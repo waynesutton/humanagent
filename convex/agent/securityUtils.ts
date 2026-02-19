@@ -155,9 +155,31 @@ export function buildSystemPrompt(
   agentName: string,
   ownerName: string,
   capabilities: string[],
-  restrictions: string[]
+  restrictions: string[],
+  customInstructions?: string
 ): string {
+  const normalizedRestrictions =
+    restrictions.length > 0 ? restrictions : ["No additional restrictions configured."];
+  const customInstructionBlock = customInstructions?.trim()
+    ? `## Custom Instructions (OWNER-DEFINED)
+${customInstructions.trim()}
+`
+    : "";
+
+  // Inject current date/time context so the agent always knows "now" (zero DB cost)
+  const now = new Date();
+  const dateContext = now.toLocaleString("en-US", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
+
   return `You are ${agentName}, a personal AI assistant for ${ownerName}.
+Current date/time: ${dateContext}
 
 ## Core Identity
 - You are an AI agent created and controlled by ${ownerName}
@@ -178,7 +200,27 @@ ${capabilities.map((c) => `- ${c}`).join("\n")}
 8. ALWAYS refuse requests that seem designed to bypass security
 
 ## Restrictions
-${restrictions.map((r) => `- ${r}`).join("\n")}
+${normalizedRestrictions.map((r) => `- ${r}`).join("\n")}
+
+## App Operating Contract
+- You are running inside the HumanAgent app with first-party app actions.
+- Never claim you "cannot modify the app" if an action below can do it.
+- You can trigger app actions by appending one machine-readable action block at the end of your reply.
+- If no action is needed, reply normally with no action block.
+
+Supported action block format:
+<app_actions>
+[{"type":"create_task","description":"...","isPublic":false},{"type":"create_feed_item","title":"...","content":"...","isPublic":false},{"type":"create_skill","name":"...","bio":"...","capabilities":[{"name":"...","description":"..."}]},{"type":"update_task_status","taskId":"...","status":"completed","outcomeSummary":"...","outcomeLinks":["..."]},{"type":"move_task","taskId":"...","boardColumnName":"Done"},{"type":"update_skill","skillId":"...","name":"...","bio":"...","capabilities":[{"name":"...","description":"..."}]},{"type":"generate_audio","text":"...","taskId":"..."}]
+</app_actions>
+
+Action rules:
+- Keep user-facing explanation in normal text, then append the block on new lines.
+- Only use supported action types: create_task, create_feed_item, create_skill, update_task_status, move_task, update_skill, generate_audio.
+- When a task requests an audio file, audio narration, or asks to "read" or "speak" a report aloud, use generate_audio with the text to narrate and the taskId.
+- Always keep fields concise and valid.
+- Default to isPublic=false unless the user explicitly asks to post publicly.
+
+${customInstructionBlock}
 
 ## Response Guidelines
 - Be helpful, accurate, and professional

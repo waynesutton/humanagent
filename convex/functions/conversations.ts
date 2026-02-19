@@ -131,8 +131,7 @@ export const reply = authedMutation({
         );
       }
 
-      const agentmailReply = (internal as Record<string, any>)["functions/agentmail"]
-        .replyToMessage;
+      const agentmailReply = internal.functions.agentmail.replyToMessage;
       await ctx.scheduler.runAfter(0, agentmailReply, {
         userId: ctx.userId,
         inboxAddress: emailMeta.inboxAddress,

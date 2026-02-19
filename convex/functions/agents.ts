@@ -194,6 +194,7 @@ export const update = authedMutation({
         tokenBudget: v.number(),
       })
     ),
+    useAccountDefaultLlm: v.optional(v.boolean()),
     agentEmail: v.optional(v.string()),
     agentPhone: v.optional(v.string()),
     phoneConfig: v.optional(
@@ -306,7 +307,7 @@ export const update = authedMutation({
       throw new Error("Agent not found");
     }
 
-    const patch: Record<string, unknown> = { updatedAt: Date.now() };
+    const patch: Partial<typeof agent> = { updatedAt: Date.now() };
     if (args.name !== undefined) patch.name = args.name;
     if (args.description !== undefined) patch.description = args.description;
     if (args.icon !== undefined) patch.icon = args.icon ?? undefined;
@@ -354,7 +355,21 @@ export const update = authedMutation({
       }
     }
 
-    await ctx.db.patch(args.agentId, patch);
+    if (args.useAccountDefaultLlm) {
+      // Clearing llmConfig makes the runtime inherit Settings-level defaults.
+      const currentAgent = Object.fromEntries(
+        Object.entries(agent).filter(
+          ([key]) => key !== "_id" && key !== "_creationTime" && key !== "llmConfig"
+        )
+      ) as Omit<typeof agent, "_id" | "_creationTime" | "llmConfig">;
+      const merged = {
+        ...currentAgent,
+        ...patch,
+      };
+      await ctx.db.replace(args.agentId, merged);
+    } else {
+      await ctx.db.patch(args.agentId, patch);
+    }
 
     // Schedule llms.txt regeneration if public visibility changed or description updated
     if (args.isPublic !== undefined || args.description !== undefined || args.name !== undefined) {

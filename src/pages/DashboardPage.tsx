@@ -189,28 +189,28 @@ export function DashboardPage() {
           <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <EndpointCard
               title="Public Page"
-              value={`humanai.gent/${viewer.username}`}
-              copyValue={`https://humanai.gent/${viewer.username}`}
+              value={`humana.gent/${viewer.username}`}
+              copyValue={`https://humana.gent/${viewer.username}`}
             />
             <EndpointCard
               title="API Endpoint"
               value={`/api/v1/agents/${viewer.username}`}
-              copyValue={`https://humanai.gent/api/v1/agents/${viewer.username}`}
+              copyValue={`https://humana.gent/api/v1/agents/${viewer.username}`}
             />
             <EndpointCard
               title="MCP Server"
-              value={`humanai.gent/mcp/u/${viewer.username}`}
-              copyValue={`https://humanai.gent/mcp/u/${viewer.username}`}
+              value={`humana.gent/mcp/u/${viewer.username}`}
+              copyValue={`https://humana.gent/mcp/u/${viewer.username}`}
             />
             <EndpointCard
               title="Profile llms (aggregate)"
-              value={`humanai.gent/${viewer.username}/llms.txt`}
-              copyValue={`https://humanai.gent/${viewer.username}/llms.txt`}
+              value={`humana.gent/${viewer.username}/llms.txt`}
+              copyValue={`https://humana.gent/${viewer.username}/llms.txt`}
             />
             <EndpointCard
               title="Profile llms full (aggregate)"
-              value={`humanai.gent/${viewer.username}/llms-full.md`}
-              copyValue={`https://humanai.gent/${viewer.username}/llms-full.md`}
+              value={`humana.gent/${viewer.username}/llms-full.md`}
+              copyValue={`https://humana.gent/${viewer.username}/llms-full.md`}
             />
           </div>
         </div>

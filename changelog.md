@@ -7,6 +7,118 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Workflow pipeline visualization: CI-style step view (inspired by GitHub Actions) showing agent processing phases with Phosphor icons, status indicators, per-step durations, connector lines, and total elapsed time. Renders in BoardPage task detail panel as a collapsible "Pipeline" section that auto-opens for in-progress tasks.
+- `workflowSteps` field on the tasks table to record each agent pipeline phase (Security scan, Config load, Context build, LLM call, Parse response, Execute actions, Save memory) with timing data. Written once at end of pipeline via `setWorkflowSteps` mutation for minimal DB overhead.
+- `WorkflowView` and `WorkflowViewCompact` components (`src/components/WorkflowView.tsx`) with grouped phase boxes, Phosphor status icons (`CheckCircle`, `XCircle`, `CircleNotch`, `ShieldCheck`, `GearSix`, `Brain`, `Lightning`, `CodeBlock`, `FloppyDisk`), and connector arrows.
+- Lightweight datetime utility library (`src/lib/datetime.ts`) with `getUserTimezone()` (Intl API, no DB call), `formatRelativeTime()`, `formatDuration()`, `formatDateTime()`, `getLocalDateContext()` (for agent prompt injection at ~15 tokens), and `getDateContext()` for structured programmatic use.
+- Agent system prompt now includes current date/time context line automatically at build time (zero DB queries, zero external API calls). Agents always know "now" without burning tokens on timezone detection.
+- `addWorkflowStep`, `setWorkflowSteps`, and `getWorkflowSteps` in `convex/functions/board.ts` for workflow step CRUD.
+- Custom `DateTimePicker` component (`src/components/DateTimePicker.tsx`) that replaces native `datetime-local` inputs with a styled picker matching the site's design system (surface/ink/accent tokens, 1px corners, DM Sans font). Calendar grid with month navigation, 12-hour time columns with 5-minute increments, AM/PM toggle, and Clear/Today footer actions. Supports `inline` (compact pill) and `field` (full width) variants.
+- Voice TTS backend: `convex/agent/tts.ts` with ElevenLabs and OpenAI TTS actions that generate audio from text and store it in Convex file storage
+- Voice listing action: `convex/functions/voice.ts` with public `listVoices` action that fetches available ElevenLabs voices from the API for the voice picker
+- Audio playback on agent chat: each agent message in `AgentChatPage` now has a speaker button that generates speech via the agent's configured voice and plays it inline
+- ElevenLabs voice picker: replaced the raw Voice ID text input in `AgentsPage` with a dropdown that loads available voices from the user's ElevenLabs account, with preview playback
+- Voice badge on agent cards: agent list view now shows the configured voice provider
+- Board task audio narration: `generate_audio` action type in the agent runtime so agents can produce TTS audio files when tasks request audio, reports, or narration
+- "Listen to report" button on `BoardPage` task detail panel and outcome viewer modal; generates audio on demand via ElevenLabs or OpenAI TTS and plays it inline
+- `outcomeAudioId` field on the tasks table to persist generated audio narrations; task cards show an "Audio narration available" badge when present
+- `speakTaskOutcome` public action in `convex/functions/voice.ts` that reads a task outcome summary, generates TTS via the assigned agent's voice config, stores the audio, and links it to the task
+- `getOutcomeAudioUrl` query and `linkOutcomeAudio` mutation in `convex/functions/board.ts` for storing and retrieving outcome audio
+- `getTaskForAudio` internal query and `getDefaultAgentId` internal query for audio generation lookups
+- Public profile activity feed capped at 10 items fetched and displayed (reduced from 20) to keep the section compact
+- Activity feed on `PublicUserProfilePage` now scrolls within a fixed `max-h-96` container so it does not push page content down
+- "Request an agent to do a task" section on public profile is now a collapsible toggle (collapsed by default) with show/hide affordance and `aria-expanded` for accessibility
+- Toggle header uses `gap-3` and `shrink-0` on the label so "Show/Hide" text is never clipped
+
+### Fixed
+
+- Moved `getVoiceConfig` internal query from `convex/agent/tts.ts` (Node.js runtime) to `convex/agent/queries.ts` (V8 runtime) to fix Convex push error: queries cannot be defined in Node.js action files
+- Fixed `BoardPage` crash (`Cannot access 'detailsTaskId' before initialization`) by moving audio playback state and handlers below all `useState` declarations they depend on
+- Fixed "Show" label being cut off inside the request-task toggle button by adding `gap-3` and `shrink-0` to the flex row
+- Fixed public profile grid alignment by switching from `items-end` and `items-start` to `items-stretch` so both columns share the same height
+
+### Changed
+
+- `getPublicFeed` query limit on `PublicUserProfilePage` reduced from 20 to 10 to match the display cap
+
+### Previous entries
+
+- Agent outcome and response pipeline: long-form file storage, thinking mode, subtasks, agent delegation, image/tool action types per `prds/agent-outcome-and-response-pipeline.md`
+- Schema fields on tasks table: `outcomeFileId` (file storage ref for full reports), `outcomeImages` (generated images), `outcomeVideoUrl`, `parentTaskId` (subtask hierarchy), `toolCallLog` (tool execution records)
+- `by_parentTaskId` index on tasks for subtask queries
+- Long-form outcome file storage: when `cleanResponse` exceeds 8000 chars, the runtime uploads the full text as a markdown file to Convex storage and links it via `outcomeFileId`; outcome viewer shows a "Download full report" link
+- Thinking mode: `parseThinkingBlocks` in `convex/agent/runtime.ts` extracts `<thinking>` blocks from LLM responses and persists them as `reasoning` type entries in `agentThoughts` via the new `saveThought` internal mutation
+- Multi-step subtask support: `create_subtask` action type in `<app_actions>`, `createTaskFromAgent` accepts optional `parentTaskId`, board task cards show a progress bar with completed/total counts for parent tasks, child task cards display a "Subtask" indicator
+- Agent-to-agent delegation: `delegate_to_agent` action type enables a coordinator agent to dispatch work to another agent by slug via `processMessage` on the `a2a` channel
+- `generate_image` action type parsed in runtime (placeholder logging; needs DALL-E/Stability API key to produce actual images)
+- `call_tool` action type parsed in runtime (placeholder logging; needs tool registry and execution sandbox)
+- `getOutcomeFileUrl` authed query and `getSubtasks` authed query in `convex/functions/board.ts`
+- `storeOutcomeFile` internal action and `linkOutcomeFile` internal mutation for file storage workflow
+- `saveThought` internal mutation and `getAgentBySlug` internal query in `convex/agent/queries.ts`
+- `OutcomeFileDownload` component in `BoardPage.tsx` for inline file download links in outcome viewer
+- Subtask progress bar and subtask badge UI on board task cards
+- Redesigned BoardPage header with ChatGPT-style always-visible task compose area (single input + pill option row) replacing the old multi-button toolbar
+- Added left sidebar nav to BoardPage with Board/Projects view toggle, agent/project filter dropdowns, collapsible New project form, and Archive completed action
+- Auto-initializes compose column selector to first sorted board column on page load so the form is always ready
+
+### Fixed
+
+- Redesigned task details modal in `src/pages/BoardPage.tsx` for readability and mobile: widened from `max-w-2xl` to `max-w-3xl`, removed raw task ID display, moved outcome to full-width primary section with Phosphor `CopySimple` clipboard icon, collapsed comments and attachments into `<details>` sections with count badges, improved markdown prose styles for code/lists/headings, and optimized mobile padding and dynamic max-height
+- Fixed pre-existing type error where `selectedColumn` (nullable) was passed where `Id<"boardColumns"> | undefined` was expected in task creation
+- Fixed `gpt-5-nano` (and other reasoning models) returning empty responses by adding `isReasoningModel` detection in `convex/agent/runtime.ts` that applies higher token budgets (16384 vs 2048) and `reasoning_effort: "low"` so the model does not exhaust its budget on internal chain-of-thought before producing visible output
+- Improved empty-content diagnostic logging in `callOpenAI` to report `completion_tokens`, `reasoning_tokens`, and `finish_reason` for faster debugging when models return blank responses
+- Fixed board modals in `src/pages/BoardPage.tsx` to stay within the viewport on long content by using `h-dvh` overlay sizing, constrained modal max height, and internal scrolling
+- Fixed missing close affordance consistency by adding a clear top-right `X` close button to the board edit modal and keeping task-details close controls reachable while scrolling
+- Fixed chat input keyboard flow in `src/pages/AgentChatPage.tsx`: `Shift+Enter` now sends and plain `Enter` inserts a new line
+- Fixed board task composer keyboard flow in `src/pages/BoardPage.tsx`: composer now supports multiline input (`textarea`) with `Shift+Enter` to submit and plain `Enter` for new lines
+- Fixed inbox reply keyboard flow in `src/pages/InboxPage.tsx` to match app standard: `Enter` newline and `Shift+Enter` send
+- Fixed A2A compose + quick-reply keyboard flow in `src/pages/A2AInboxPage.tsx` to match app standard: `Enter` newline and `Shift+Enter` send
+- Fixed public profile task-request composer keyboard flow in `src/pages/PublicUserProfilePage.tsx` to match app standard: `Enter` newline and `Shift+Enter` request task
+- Added inline keyboard helper copy under message/task composers so shortcut behavior is obvious
+- Fixed agent task outcome displaying only a brief meta-summary instead of the actual work content: `processMessage` in `convex/agent/runtime.ts` now uses `cleanResponse` (full LLM text reply) as `outcomeSummary` when marking tasks completed or failed, falling back to the structured action summary only when the full reply is unavailable
+- Fixed recurring placeholder outcomes in completed tasks (for example "Processing scheduled tasks." or generic "Done" replies) by adding outcome-quality guards in `convex/agent/runtime.ts` that reject boilerplate and persist a detailed fallback message when no substantive output is returned
+- Fixed task card badge row overflowing card boundaries by adding `flex-wrap`, `min-w-0`, and `max-w truncate` to badge containers in `TaskCard` and `ArchivedTaskCard`
+- Fixed board grid at `lg` breakpoint being too narrow after sidebar was added; updated to `md:grid-cols-2 xl:grid-cols-3`
+
+### Changed
+
+- Replaced native `<input type="datetime-local">` in `BoardPage.tsx` (task creation form and edit task modal) with custom `DateTimePicker` component so the date/time picker visually matches the site's design system instead of using browser default chrome
+- Added reasoning model detection (`isReasoningModel`) in `convex/agent/runtime.ts` for o1, o3, o4, and gpt-5 family models with automatic parameter adjustment: 16384 token budget, `reasoning_effort: "low"` as first request variant, and sequential fallback to standard `max_completion_tokens` when provider rejects reasoning params
+- Changed board task assignment rules in `src/pages/BoardPage.tsx`: unassigned tasks are now blocked from being placed or dragged into board columns (Todo, In Progress, Done), with warning toasts on create/edit/drag attempts
+- Board view/project toggle moved from header tab strip to sidebar nav buttons for cleaner separation of navigation and content
+- Scheduled task prompt in `convex/crons.ts` now explicitly bans placeholder acknowledgements and requires per-task detailed markdown output blocks before `<app_actions>`
+
+- Added task outcome fields in schema (`tasks.outcomeSummary`, `tasks.outcomeLinks`) and email tracking fields (`outcomeEmailStatus`, `outcomeEmailSentAt`, `outcomeEmailLastAttemptAt`, `outcomeEmailError`) for task completion reporting
+- Added "Outcome" section in board task details modal with editable summary, links, and a save button so users can document what the task produced
+- Added type-aware attachment previews in task details: inline image thumbnails, inline video players, PDF preview buttons, and document download links
+- Added outcome email delivery via AgentMail when a task is marked completed, sending the done status and results to the user's profile email if AgentMail is configured
+- Added email delivery status indicator in task details (queued, sent, failed) with timestamp and error details
+- Added `processAgentTasks` internal action in `convex/crons.ts` that wires the agent scheduler to the LLM runtime, so agents in auto/cron mode now actually process pending and in-progress tasks every 5 minutes instead of only logging timestamps
+- Added auto-resolve board column in `updateTaskFromAgent` so agent-driven status changes (pending to in_progress, in_progress to completed/failed) automatically move task cards to the correct Kanban column
+- Added `doNowAt` timestamp setting in `updateTaskFromAgent` when an agent moves a task to in_progress, so the board displays "Started Xm ago" instead of "In progress, ETA unknown"
+- Added feed items for agent-initiated task transitions: "started working on a task" (in_progress) and "marked task as failed" (failed) alongside existing completion feed items
+- Added `sendMessage` internal action in `convex/functions/agentmail.ts` for general transactional email sending from agent inboxes
+- Added task outcome viewer modal in `src/pages/BoardPage.tsx` with markdown-rendered report view (`react-markdown`), scrollable content area, result links section, and "Open details" navigation
+- Added "View outcome" icon (document icon, green) on completed task cards in the board so users can open the report directly without entering task details first
+- Added markdown read mode in the task details Outcome section: when an outcome exists it renders as formatted markdown instead of a raw textarea, with an "Edit outcome" toggle to switch back to edit mode
+- Added "View full report" button in task details header that opens the dedicated outcome viewer modal
+- Added shared `useEscapeKey` hook in `src/hooks/useEscapeKey.ts` for keyboard-driven modal dismissal
+- Added ESC key handling to 12 modals across 6 pages (BoardPage, SettingsPage, AgentsPage, FeedPage, SkillFilePage, PublicUserProfilePage) with stacking-aware priority so the topmost modal closes first
+- Added compact copy icon buttons on each public connect-option row in `src/pages/PublicUserProfilePage.tsx`, including both the main profile list and the agent modal list
+- Added task execution timing fields in schema (`tasks.targetCompletionAt`, `tasks.doNowAt`) to track planned completion windows and explicit “start now” actions
+- Added `doNow` task mutation in `convex/functions/board.ts` and frontend wiring in `src/lib/platformApi.ts` + `src/pages/BoardPage.tsx` so Todo tasks can be immediately moved to in-progress
+- Added task target completion controls in board create/edit UX with inline due-status chips on task cards (`No target date`, `Due in Xh`, `Due`, `Overdue`)
+- Added Settings `Cron jobs` management section (`#settings-cron-jobs`) with create/list/pause/resume/delete controls backed by `userSchedules` APIs
+- Added chat-to-feed sync for dashboard task creation so `createTaskFromChat` now writes a feed event when a chat message becomes a board task
+- Added provider model catalog APIs in `convex/functions/credentials.ts`: `getModelCatalog` (query) and `refreshModelCatalog` (action) so UI can fetch live model lists from configured BYOK providers and fall back safely when providers fail
+- Added OpenAI fallback suggestions for GPT-5 family model IDs (`gpt-5.2`, `gpt-5-mini`, `gpt-5-nano`) in provider model helpers
+- Added explicit “Use account default” LLM mode in `src/pages/AgentsPage.tsx` so agent-level model selection can cleanly inherit `SettingsPage` defaults
+- Added BYOK credential support for additional voice providers: Telnyx, Plivo, and Vapi in schema validation, credential save/remove flows, and provider status reporting
+- Added Settings BYOK integration cards and setup guidance for Telnyx, Plivo, and Vapi alongside existing Twilio/AgentMail/Resend options
+- Added Landing provider visibility for Telnyx, Plivo, and Vapi in the feature + BYOK sections
+- Added LLM model help modal in `src/pages/AgentsPage.tsx` with provider model-doc links, live OpenRouter model catalog lookup, and one-click model selection into the agent model field
+- Added LLM model help modal in `src/pages/SettingsPage.tsx` with the same provider docs and live OpenRouter model lookup flow for user-level LLM configuration
+- Added quick-link anchor navigation at the top of `src/pages/SettingsPage.tsx` for direct jumps to major settings sections (Profile, Appearance, Privacy, LLM, Usage, BYOK, API keys, Agent status, Security, Danger zone)
 - Added board project support with new schema table `boardProjects`, task-level project link (`tasks.projectId`), and index `by_userId_projectId`
 - Added board project Convex APIs in `convex/functions/board.ts`: `getProjects`, `createProject`, `updateProject`, `deleteProject`
 - Added dual board UI modes in `src/pages/BoardPage.tsx`: `Board view` and `Projects view` for status-driven or project-driven planning
@@ -45,6 +157,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- Changed task details Outcome section from textarea-only to a dual-mode view: read mode renders `outcomeSummary` as markdown with `react-markdown`, write mode shows textarea fields with Save and Cancel controls
+- Changed outcome email text in `buildOutcomeEmailText` to include the full outcome summary content with a "Report" section header and a board deep-link footer
+- Changed `processAgentTasks` scheduler prompt in `convex/crons.ts` to include explicit `<app_actions>` format examples so smaller LLM models can respond with structured task updates
+- Changed agent scheduler in `convex/crons.ts` from a metadata-only shell (timestamps + audit log) to a full task processing pipeline that queries pending/in-progress tasks via `getAgentContext` and feeds them to the agent LLM runtime via `processMessage`
+- Changed `updateTaskFromAgent` in `convex/functions/board.ts` to auto-resolve board columns on status transitions (pending maps to Todo, in_progress to In Progress, completed/failed to Done) instead of requiring an explicit column ID
+- Changed `formatTargetStatus` in `src/pages/BoardPage.tsx` to show richer status labels: "Completed {date}", "Failed", "Started {time ago}", "In progress, ETA unknown", "Overdue {hours}h", and "ETA {hours}h" or "ETA {date}"
+- Changed `moveTask` mutation in `convex/functions/board.ts` to create feed items for task owner when non-requested tasks transition to completed or failed
+- Changed `getPublicTasks` in `convex/functions/board.ts` to return real public tasks again, scoped by user and privacy settings (`profileVisible`, `showTasks`) instead of always returning an empty list
+- Updated public task rendering in `src/pages/PublicAgentPage.tsx` to include task target completion date when present
+- Updated agent scheduling copy in `src/pages/AgentsPage.tsx` to deep-link account-level cron management in Settings
+- Updated OpenAI-compatible runtime request handling in `convex/agent/runtime.ts` to try `max_completion_tokens`, then `max_tokens`, then no explicit token limit, improving compatibility across OpenAI, DeepSeek, MiniMax, Kimi, and custom OpenAI-style endpoints
+- Updated Kimi default base URL in runtime routing to `https://api.moonshot.ai/v1` to align with provider defaults used elsewhere
+- Changed LLM model selection UX in both `src/pages/SettingsPage.tsx` and `src/pages/AgentsPage.tsx` from dropdown-first to editable text input first, while still offering provider-based model suggestions through `datalist`
+- Changed model field guidance copy to explicitly support GPT-5 style model IDs and other provider-native model names
+- Updated `src/lib/platformApi.ts` settings contract to include `getModelCatalog` and `refreshModelCatalog` references
+- Updated `convex/functions/agents.ts` update mutation to support clearing per-agent `llmConfig` overrides (`useAccountDefaultLlm`) so precedence is deterministic and reversible
+- Updated `src/pages/AgentsPage.tsx` provider picker UX to disable unconfigured providers, show key-missing warnings, and label whether each agent is using account default or override
+- Updated agent phone setup UX in `src/pages/AgentsPage.tsx` to treat Twilio, Telnyx, Plivo, and Vapi as valid provider keys for enabling phone workflows
+- Updated agent communication copy and setup instructions to reflect multi-provider phone support instead of Twilio-only wording
+- Updated both LLM help modals to include inline future-maintenance comments around provider-map synchronization and optional backend-proxy migration for live catalog fetching
 - Updated Settings to include a default-agent control wired to the same `setDefault` mutation as Agents, keeping base username API/MCP routing behavior in sync
 - Updated landing-page endpoint diagram copy to explicitly note that base username routes resolve to the configured default agent
 - Updated llms endpoint labels across canonical sharing surfaces to standardized wording: `Profile llms (aggregate)` and `Agent llms (persona)` (plus explicit `full` variants)
@@ -61,6 +193,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Updated board initialization/backfill so existing users missing `Todo` automatically get default columns normalized
 - Updated dashboard navigation with a dedicated `Chat` route and kept `Inbox` focused on external channels by excluding dashboard chats from Inbox view
 - Updated notification UX to use consistent success, warning, info, and error feedback across frontend actions
+- Updated notification defaults to a unified 5400ms timeout for both standard and confirm/action toasts
+- Updated global Sileo placement and shape defaults to bottom-right with rounded corners for a more native Sileo look
 - Updated `files.md` to reflect the Sileo notification layer and page-level notification behavior
 - Expanded schema and Convex provider validators to include `deepseek` across user, agent, and credential configuration
 - BYOK provider coverage is now 9 providers (OpenRouter, Anthropic, OpenAI, DeepSeek, Google, Mistral, MiniMax, Kimi, xAI)
@@ -80,12 +214,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed empty LLM response handling in `convex/agent/runtime.ts`: empty content from OpenAI-compatible models now returns a fallback string instead of throwing, preventing scheduler task processing from crashing on models that return blank responses
+- Fixed OpenAI model refusal handling by checking the `refusal` field in API responses and returning a user-friendly message instead of treating it as empty content
+- Fixed missing ESC key dismiss on all 12 modals across 6 pages (none had keyboard handlers previously)
+- Fixed `projectId: null` schema validation error in board task updates by mapping null to undefined for optional `v.id("boardProjects")` field in both frontend (`BoardPage.tsx`) and backend (`board.ts updateTask`)
+- Fixed blank board page caused by React "Rules of Hooks" violation where a `useEffect` for outcome state initialization was placed after a conditional early return block
+- Fixed agent scheduler not processing tasks: the cron was running every 5 minutes but only writing timestamps and audit logs without calling the LLM runtime or moving tasks between columns
+- Fixed opaque chat failures by returning targeted diagnostics for provider/model/base-URL configuration-style errors in `convex/agent/runtime.ts` instead of always returning a generic fallback response
+- Fixed dashboard chat UX latency ambiguity in `src/pages/AgentChatPage.tsx` by showing an inline `Agent is thinking...` state until a new agent reply is observed
+- Fixed OpenAI-compatible empty-content error handling path in `convex/agent/runtime.ts` to avoid attempting to re-read a consumed response body
+- Fixed non-scrolling LLM model help modal content in both `src/pages/AgentsPage.tsx` and `src/pages/SettingsPage.tsx` by converting modal containers to flex columns and making the body a constrained scroll region
 - Fixed `BoardPage` runtime hook-order crash by removing a conditional hook path and making project summary computation safe during loading
 - Fixed board context clarity by adding explicit labels for which project scope the board is currently showing
 - Fixed cross-user key namespace risk by enforcing `apiKey.userId === targetUser._id` in REST and MCP gateway checks
 - Fixed public connect endpoint clarity by adding profile-level messaging that API/MCP endpoints are authenticated while docs and sitemap endpoints remain public
 - Fixed Vite package export issue by removing invalid `sileo/dist/styles.css` import path usage from `main.tsx`
 - Fixed low-contrast/blurred toast content by adding explicit Sileo data-attribute style overrides in `src/index.css`
+- Fixed poor toast dismiss UX by moving close control to a compact corner `×` instead of a full-width inline button
+- Fixed overly long confirm/action toast persistence by normalizing action timeout from 10000ms to 5400ms
+- Fixed custom toast styling drift that made notifications look unlike Sileo by restoring rounded default toast shape and simplifying standard toast button behavior
+- Fixed PostCSS warning risk from CSS font import by moving Google Fonts loading from `src/index.css` into `index.html` link tags
 - Fixed noisy unauthorized errors from agent thinking queries by returning empty results for unauthenticated/unauthorized reads
 - Fixed public route collision where discovery-doc paths like `/:username/sitemap.md` were incorrectly interpreted as public agent slug routes
 
@@ -123,7 +271,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Security gap where an invalid API key would allow message processing with "anonymous" caller identity
 - Restored clean TypeScript build by removing an unused import in `convex/functions/agentDocs.ts` (`npm run typecheck` passes)
 - Enforced AgentMail webhook signature verification with HMAC-SHA256 validation against `AGENTMAIL_WEBHOOK_SECRET`
-- Aligned dashboard MCP endpoint display with actual route format (`https://humanai.gent/mcp/u/{username}`)
+- Aligned dashboard MCP endpoint display with actual route format (`https://humana.gent/mcp/u/{username}`)
 - Synced docs inventory in `files.md` with current A2A files and `TASK.md`
 - Added explicit `returns` validators across core Convex function modules (`agents`, `users`, `skills`, `board`, `feed`, `apiKeys`, `conversations`, `agentDocs`, `llmsTxt`)
 - Added `agents` indexes for `agentPhone` and `agentEmail`, and updated internal webhook lookups to indexed queries

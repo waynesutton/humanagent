@@ -100,7 +100,7 @@ export function OnboardingPage() {
                 Username
               </label>
               <div className="mt-1.5 flex items-center rounded-lg border border-surface-3 bg-surface-1 focus-within:border-accent focus-within:ring-1 focus-within:ring-accent">
-                <span className="pl-3 text-sm text-ink-2">humanai.gent/</span>
+                <span className="pl-3 text-sm text-ink-2">humana.gent/</span>
                 <input
                   id="username"
                   type="text"

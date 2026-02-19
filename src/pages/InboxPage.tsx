@@ -3,7 +3,7 @@
  *
  * View and manage agent conversations within the dashboard
  */
-import { useState } from "react";
+import { useState, type KeyboardEvent } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
 import { Id } from "../../convex/_generated/dataModel";
@@ -62,6 +62,13 @@ export function InboxPage() {
     } catch (error) {
       notify.error("Could not send reply", error);
     }
+  }
+
+  function handleReplyKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key !== "Enter" || !e.shiftKey) return;
+    e.preventDefault();
+    if (!replyText.trim()) return;
+    void handleSendReply();
   }
 
   // Handle status change
@@ -284,11 +291,7 @@ export function InboxPage() {
                         placeholder="Type a reply..."
                         className="input flex-1 resize-none"
                         rows={2}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                            handleSendReply();
-                          }
-                        }}
+                        onKeyDown={handleReplyKeyDown}
                       />
                       <button
                         onClick={handleSendReply}
@@ -299,7 +302,7 @@ export function InboxPage() {
                       </button>
                     </div>
                     <p className="mt-2 text-xs text-ink-2">
-                      Press Cmd+Enter to send
+                      Enter = new line, Shift+Enter = send
                     </p>
                   </div>
                 </>

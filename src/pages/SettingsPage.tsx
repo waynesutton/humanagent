@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useAction, useQuery, useMutation } from "convex/react";
 import type { Id } from "../../convex/_generated/dataModel";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
 import { getAuth } from "../lib/auth";
 import { notify } from "../lib/notify";
 import { applyTheme, type ThemeMode } from "../lib/theme";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 import {
   BROWSER_AUTOMATION_SERVICES,
   type CredentialService,
@@ -35,6 +36,19 @@ type AgentOption = {
   name: string;
   slug: string;
   isDefault?: boolean;
+};
+
+type UserSchedule = {
+  _id: Id<"userSchedules">;
+  jobName: string;
+  schedule: {
+    kind: "cron" | "interval";
+    cronspec?: string;
+    intervalMs?: number;
+  };
+  isActive: boolean;
+  lastRun?: number;
+  lastResult?: "success" | "failure" | "skipped";
 };
 
 const KEY_SCOPE_OPTIONS = [
@@ -69,6 +83,106 @@ type RateLimitDashboard = {
   }>;
 };
 
+type ProviderModelReference = {
+  id: ProviderType;
+  name: string;
+  docsUrl: string;
+  examples: Array<string>;
+};
+
+type OpenRouterModel = {
+  id: string;
+  name?: string;
+};
+
+type ModelOption = {
+  id: string;
+  label: string;
+};
+
+type ModelCatalogResult = {
+  provider: ProviderType;
+  models: Array<ModelOption>;
+  source: "live" | "fallback" | "empty";
+  fetchedAt: number;
+  hasCredential: boolean;
+  error?: string;
+};
+
+// Keep this in sync with provider options as they evolve.
+// Future update: if we add a backend proxy endpoint for model catalogs, switch
+// the live catalog fetch to the server-side route for more reliable CORS handling.
+const PROVIDER_MODEL_REFERENCES: Array<ProviderModelReference> = [
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    docsUrl: "https://openrouter.ai/models",
+    examples: ["anthropic/claude-sonnet-4", "openai/gpt-4o", "google/gemini-2.0-flash-001"],
+  },
+  {
+    id: "anthropic",
+    name: "Anthropic",
+    docsUrl: "https://docs.anthropic.com/en/docs/about-claude/models",
+    examples: ["claude-sonnet-4-20250514", "claude-3-7-sonnet-latest"],
+  },
+  {
+    id: "openai",
+    name: "OpenAI",
+    docsUrl: "https://platform.openai.com/docs/models",
+    examples: ["gpt-4o", "gpt-4.1-mini", "o3-mini"],
+  },
+  {
+    id: "deepseek",
+    name: "DeepSeek",
+    docsUrl: "https://api-docs.deepseek.com/quick_start/pricing",
+    examples: ["deepseek-chat", "deepseek-reasoner"],
+  },
+  {
+    id: "google",
+    name: "Google AI",
+    docsUrl: "https://ai.google.dev/gemini-api/docs/models",
+    examples: ["gemini-2.0-flash", "gemini-1.5-pro"],
+  },
+  {
+    id: "mistral",
+    name: "Mistral",
+    docsUrl: "https://docs.mistral.ai/getting-started/models/models_overview/",
+    examples: ["mistral-large-latest", "ministral-8b-latest"],
+  },
+  {
+    id: "minimax",
+    name: "MiniMax",
+    docsUrl: "https://www.minimaxi.com/platform",
+    examples: ["abab6.5s-chat"],
+  },
+  {
+    id: "kimi",
+    name: "Kimi (Moonshot)",
+    docsUrl: "https://platform.moonshot.ai/docs/guide/start-using-kimi-api",
+    examples: ["kimi-k2-0711-preview"],
+  },
+  {
+    id: "xai",
+    name: "xAI (Grok)",
+    docsUrl: "https://docs.x.ai/docs/models",
+    examples: ["grok-2-1212", "grok-beta"],
+  },
+] as const;
+
+const SETTINGS_SECTION_ANCHORS: Array<{ id: string; label: string }> = [
+  { id: "settings-profile", label: "Profile" },
+  { id: "settings-appearance", label: "Appearance" },
+  { id: "settings-privacy", label: "Privacy" },
+  { id: "settings-llm", label: "LLM" },
+  { id: "settings-usage", label: "Usage" },
+  { id: "settings-byok", label: "BYOK" },
+  { id: "settings-api-keys", label: "API keys" },
+  { id: "settings-cron-jobs", label: "Cron jobs" },
+  { id: "settings-agent-status", label: "Agent status" },
+  { id: "settings-security", label: "Security" },
+  { id: "settings-danger", label: "Danger zone" },
+] as const;
+
 export function SettingsPage() {
   const viewer = useQuery(platformApi.convex.auth.viewer);
   const apiKeys = useQuery(platformApi.convex.settings.listApiKeys) as ApiKeyRow[] | undefined;
@@ -91,11 +205,18 @@ export function SettingsPage() {
     platformApi.convex.settings.generateProfilePhotoUploadUrl
   );
   const setProfilePhoto = useMutation(platformApi.convex.settings.setProfilePhoto);
+  const schedules = useQuery(platformApi.convex.settings.listSchedules) as
+    | UserSchedule[]
+    | undefined;
   const createApiKey = useMutation(platformApi.convex.settings.createApiKey);
   const revokeApiKey = useMutation(platformApi.convex.settings.revokeApiKey);
   const rotateApiKey = useMutation(platformApi.convex.settings.rotateApiKey);
   const saveCredential = useMutation(platformApi.convex.settings.saveCredential);
   const removeCredential = useMutation(platformApi.convex.settings.removeCredential);
+  const createSchedule = useMutation(platformApi.convex.settings.createSchedule);
+  const toggleScheduleActive = useMutation(platformApi.convex.settings.toggleScheduleActive);
+  const removeSchedule = useMutation(platformApi.convex.settings.removeSchedule);
+  const refreshModelCatalog = useAction(platformApi.convex.settings.refreshModelCatalog);
   const setDefaultAgent = useMutation(platformApi.convex.agents.setDefault);
   const auth = getAuth();
 
@@ -141,6 +262,14 @@ export function SettingsPage() {
   const [savingByok, setSavingByok] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>("light");
   const [securityTab, setSecurityTab] = useState<"alerts" | "rate_limits">("alerts");
+  const [showModelHelpModal, setShowModelHelpModal] = useState(false);
+  const [openRouterModels, setOpenRouterModels] = useState<Array<OpenRouterModel>>([]);
+  const [isLoadingOpenRouterModels, setIsLoadingOpenRouterModels] = useState(false);
+  const [openRouterModelLoadError, setOpenRouterModelLoadError] = useState<string | null>(null);
+  const [isRefreshingProviderModels, setIsRefreshingProviderModels] = useState(false);
+  const modelCatalog = useQuery(platformApi.convex.settings.getModelCatalog, {
+    provider: llmProvider,
+  }) as ModelCatalogResult | undefined;
 
   // New API key form
   const [showNewKey, setShowNewKey] = useState(false);
@@ -164,6 +293,21 @@ export function SettingsPage() {
     null
   );
   const [updatingDefaultAgent, setUpdatingDefaultAgent] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    description: string;
+    buttonTitle: string;
+    onConfirm: () => Promise<void>;
+  } | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [newScheduleName, setNewScheduleName] = useState("");
+  const [newScheduleKind, setNewScheduleKind] = useState<"cron" | "interval">("cron");
+  const [newScheduleCronSpec, setNewScheduleCronSpec] = useState("0 9 * * *");
+  const [newScheduleIntervalMinutes, setNewScheduleIntervalMinutes] = useState(60);
+  const [savingSchedule, setSavingSchedule] = useState(false);
+
+  useEscapeKey(() => setShowModelHelpModal(false), showModelHelpModal);
+  useEscapeKey(() => setConfirmDialog(null), !!confirmDialog && !showModelHelpModal);
 
   useEffect(() => {
     if (viewer) {
@@ -232,6 +376,22 @@ export function SettingsPage() {
       return myAgents.find((agent) => agent.isDefault)?._id ?? myAgents[0]!._id;
     });
   }, [myAgents]);
+
+  useEffect(() => {
+    const hasKey =
+      llmProvider !== "custom" && (llmProviderStatus?.[llmProvider]?.configured ?? false);
+    if (!hasKey) return;
+    if (modelCatalog && modelCatalog.models.length > 0) return;
+
+    setIsRefreshingProviderModels(true);
+    void refreshModelCatalog({ provider: llmProvider })
+      .catch((error: unknown) => {
+        console.error("Failed to refresh provider models:", error);
+      })
+      .finally(() => {
+        setIsRefreshingProviderModels(false);
+      });
+  }, [llmProvider, llmProviderStatus, modelCatalog, refreshModelCatalog]);
 
   async function handleSaveProfile() {
     setSaveError(null);
@@ -376,12 +536,29 @@ export function SettingsPage() {
       setShowByokForm(null);
       setByokApiKey("");
       setByokBaseUrl("");
+      if (LLM_PROVIDERS.some((provider) => provider.id === service)) {
+        await refreshModelCatalog({ provider: service as ProviderType });
+      }
       notify.success("Credential saved");
     } catch (error) {
       notify.error("Could not save credential", error);
     } finally {
       setSavingByok(false);
     }
+  }
+
+  function handleLlmProviderChange(provider: ProviderType) {
+    setLlmProvider(provider);
+    const hasKey = provider !== "custom" && (llmProviderStatus?.[provider]?.configured ?? false);
+    if (!hasKey) return;
+    setIsRefreshingProviderModels(true);
+    void refreshModelCatalog({ provider })
+      .catch((error: unknown) => {
+        console.error("Failed to refresh provider models:", error);
+      })
+      .finally(() => {
+        setIsRefreshingProviderModels(false);
+      });
   }
 
   // Remove BYOK credential
@@ -431,7 +608,7 @@ export function SettingsPage() {
   }
 
   async function handleRevokeKey(keyId: Id<"apiKeys">) {
-    notify.confirmAction({
+    setConfirmDialog({
       title: "Revoke this API key?",
       description: "This cannot be undone.",
       buttonTitle: "Revoke",
@@ -447,7 +624,7 @@ export function SettingsPage() {
   }
 
   async function handleRotateKey(keyId: Id<"apiKeys">) {
-    notify.confirmAction({
+    setConfirmDialog({
       title: "Rotate this API key?",
       description: "A new key will be created and the current key will be revoked.",
       buttonTitle: "Rotate",
@@ -507,6 +684,72 @@ export function SettingsPage() {
     }
   }
 
+  async function handleCreateSchedule(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newScheduleName.trim()) return;
+    setSavingSchedule(true);
+    try {
+      if (newScheduleKind === "cron") {
+        await createSchedule({
+          jobName: newScheduleName.trim(),
+          schedule: {
+            kind: "cron",
+            cronspec: newScheduleCronSpec.trim(),
+          },
+        });
+      } else {
+        await createSchedule({
+          jobName: newScheduleName.trim(),
+          schedule: {
+            kind: "interval",
+            intervalMs: Math.max(1, newScheduleIntervalMinutes) * 60 * 1000,
+          },
+        });
+      }
+      setNewScheduleName("");
+      notify.success("Cron job created");
+    } catch (error) {
+      notify.error("Could not create cron job", error);
+    } finally {
+      setSavingSchedule(false);
+    }
+  }
+
+  async function handleToggleSchedule(scheduleId: Id<"userSchedules">) {
+    try {
+      await toggleScheduleActive({ scheduleId });
+    } catch (error) {
+      notify.error("Could not update cron job", error);
+    }
+  }
+
+  async function handleRemoveSchedule(scheduleId: Id<"userSchedules">) {
+    setConfirmDialog({
+      title: "Delete this cron job?",
+      description: "This removes the schedule for this account.",
+      buttonTitle: "Delete",
+      onConfirm: async () => {
+        try {
+          await removeSchedule({ scheduleId });
+          notify.success("Cron job deleted");
+        } catch (error) {
+          notify.error("Could not delete cron job", error);
+        }
+      },
+    });
+  }
+
+  async function handleConfirmDialog() {
+    if (!confirmDialog) return;
+    setConfirming(true);
+    try {
+      await confirmDialog.onConfirm();
+      setConfirmDialog(null);
+    } finally {
+      setConfirming(false);
+    }
+  }
+
   async function handleDeleteAccount() {
     if (deleteConfirmText.trim().toUpperCase() !== "DELETE") return;
 
@@ -543,6 +786,29 @@ export function SettingsPage() {
     URL.revokeObjectURL(url);
   }
 
+  async function openModelHelpModal() {
+    setShowModelHelpModal(true);
+    if (openRouterModels.length > 0 || isLoadingOpenRouterModels) return;
+
+    setIsLoadingOpenRouterModels(true);
+    setOpenRouterModelLoadError(null);
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/models");
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const payload = (await response.json()) as { data?: Array<OpenRouterModel> };
+      setOpenRouterModels(payload.data ?? []);
+    } catch (error) {
+      console.error("Failed to load OpenRouter model catalog:", error);
+      setOpenRouterModelLoadError(
+        "Could not load live model catalog right now. Use provider docs links below."
+      );
+    } finally {
+      setIsLoadingOpenRouterModels(false);
+    }
+  }
+
   if (!viewer) {
     return (
       <DashboardLayout>
@@ -555,7 +821,7 @@ export function SettingsPage() {
 
   return (
     <DashboardLayout>
-      <div className="mx-auto max-w-3xl animate-fade-in">
+      <div className="mx-auto max-w-6xl animate-fade-in">
         {/* Header */}
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -571,9 +837,27 @@ export function SettingsPage() {
           ) : null}
         </div>
 
-        <div className="mt-8 space-y-8">
+        <div className="mt-8 grid gap-8 lg:grid-cols-[220px,minmax(0,1fr)] lg:items-start">
+          <aside className="lg:sticky lg:top-24">
+            <nav className="rounded-lg border border-surface-3 bg-surface-1 p-3">
+              <p className="text-xs font-medium uppercase tracking-wide text-ink-2">Quick links</p>
+              <div className="mt-2 grid gap-2">
+                {SETTINGS_SECTION_ANCHORS.map((section) => (
+                  <a
+                    key={section.id}
+                    href={`#${section.id}`}
+                    className="block rounded border border-surface-3 bg-surface-0 px-2.5 py-1.5 text-xs text-ink-1 hover:bg-surface-2"
+                  >
+                    {section.label}
+                  </a>
+                ))}
+              </div>
+            </nav>
+          </aside>
+
+          <div className="min-w-0 space-y-8">
           {/* Profile */}
-          <section className="card">
+          <section id="settings-profile" className="card scroll-mt-24">
             <h2 className="font-semibold text-ink-0">Profile</h2>
             <p className="mt-1 text-sm text-ink-1">
               Your public display information.
@@ -736,7 +1020,7 @@ export function SettingsPage() {
             </div>
           </section>
 
-          <section className="card">
+          <section id="settings-appearance" className="card scroll-mt-24">
             <h2 className="font-semibold text-ink-0">Appearance</h2>
             <p className="mt-1 text-sm text-ink-1">
               Switch between light and dark mode for the dashboard.
@@ -762,7 +1046,7 @@ export function SettingsPage() {
           </section>
 
           {/* Privacy & Visibility */}
-          <section className="card">
+          <section id="settings-privacy" className="card scroll-mt-24">
             <h2 className="font-semibold text-ink-0">Privacy & Visibility</h2>
             <p className="mt-1 text-sm text-ink-1">
               Control what's visible on your public agent profile page.
@@ -890,7 +1174,7 @@ export function SettingsPage() {
           </section>
 
           {/* LLM Configuration */}
-          <section className="card">
+          <section id="settings-llm" className="card scroll-mt-24">
             <h2 className="font-semibold text-ink-0">LLM Configuration</h2>
             <p className="mt-1 text-sm text-ink-1">
               Configure the AI model powering your agent. Add your own API keys (BYOK) to use your preferred provider.
@@ -902,7 +1186,7 @@ export function SettingsPage() {
                 </label>
                 <select
                   value={llmProvider}
-                  onChange={(e) => setLlmProvider(e.target.value as ProviderType)}
+                  onChange={(e) => handleLlmProviderChange(e.target.value as ProviderType)}
                   className="input mt-1.5"
                 >
                   {LLM_PROVIDERS.map((p) => {
@@ -919,20 +1203,56 @@ export function SettingsPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-ink-0">
-                  Model
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="block text-sm font-medium text-ink-0">
+                    Model
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => void openModelHelpModal()}
+                    className="text-xs text-accent hover:underline"
+                  >
+                    Model help
+                  </button>
+                </div>
                 <input
                   type="text"
                   value={llmModel}
                   onChange={(e) => setLlmModel(e.target.value)}
                   className="input mt-1.5"
-                  placeholder="gpt-4o or glm-5"
+                  placeholder="gpt-5.2, gpt-5-mini, or any provider model ID"
+                  list={
+                    llmProvider !== "custom" &&
+                    (llmProviderStatus?.[llmProvider]?.configured ?? false) &&
+                    (modelCatalog?.models?.length ?? 0) > 0
+                      ? "settings-llm-model-suggestions"
+                      : undefined
+                  }
                 />
+                {llmProvider !== "custom" &&
+                (llmProviderStatus?.[llmProvider]?.configured ?? false) &&
+                (modelCatalog?.models?.length ?? 0) > 0 ? (
+                  <datalist id="settings-llm-model-suggestions">
+                    {modelCatalog?.models.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.label}
+                      </option>
+                    ))}
+                  </datalist>
+                ) : null}
+                {isRefreshingProviderModels ? (
+                  <p className="mt-1 text-xs text-ink-2">Loading available models...</p>
+                ) : null}
+                {modelCatalog?.error ? (
+                  <p className="mt-1 text-xs text-amber-500">
+                    Could not load live model list. Showing fallback options.
+                  </p>
+                ) : null}
                 <p className="mt-1 text-xs text-ink-2">
                   {llmProvider === "openrouter" && "Browse models at openrouter.ai/models"}
                   {llmProvider === "anthropic" && "e.g., claude-sonnet-4, claude-opus-4"}
-                  {llmProvider === "openai" && "e.g., gpt-4o, gpt-4-turbo, glm-5 (with z.ai OpenAI-compatible base URL)"}
+                  {llmProvider === "openai" &&
+                    "e.g., gpt-5.2, gpt-5-mini, gpt-5-nano, gpt-4o, glm-5 (with z.ai OpenAI-compatible base URL)"}
                   {llmProvider === "deepseek" && "e.g., deepseek-chat, deepseek-reasoner"}
                   {llmProvider === "google" && "e.g., gemini-2.0-flash, gemini-1.5-pro"}
                   {llmProvider === "mistral" && "e.g., mistral-large, mistral-medium"}
@@ -990,7 +1310,7 @@ export function SettingsPage() {
           </section>
 
           {/* Usage & Rate Limits */}
-          <section className="card">
+          <section id="settings-usage" className="card scroll-mt-24">
             <h2 className="font-semibold text-ink-0">Usage & Rate Limits</h2>
             <p className="mt-1 text-sm text-ink-1">
               Set a universal monthly token budget and per-channel rate limits to prevent spam and control costs across all models.
@@ -1183,7 +1503,7 @@ export function SettingsPage() {
           </section>
 
           {/* BYOK API Keys */}
-          <section className="card">
+          <section id="settings-byok" className="card scroll-mt-24">
             <h2 className="font-semibold text-ink-0">API Keys (BYOK)</h2>
             <p className="mt-1 text-sm text-ink-1">
               Add your own API keys to use providers directly. Keys are encrypted and never shared.
@@ -1408,7 +1728,46 @@ export function SettingsPage() {
                                   Format: <code className="bg-surface-1 px-1 rounded">ACCOUNT_SID:AUTH_TOKEN</code>
                                 </p>
                                 <p className="text-xs text-ink-2">
-                                  Enables voice calls and SMS for your agents. Purchase a phone number in your Twilio console, then add it to your agent.
+                                  Enables voice calls and SMS for your agents. You can use Twilio, Telnyx, or Plivo credentials for phone workflows.
+                                </p>
+                              </div>
+                            )}
+                            {service.id === "telnyx" && (
+                              <div className="space-y-1">
+                                <p className="text-xs text-ink-2">
+                                  Get your API key in <a href="https://portal.telnyx.com/" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">portal.telnyx.com</a>
+                                </p>
+                                <p className="text-xs text-ink-2">
+                                  Use this for voice APIs, messaging, and number management for your agents.
+                                </p>
+                                <p className="text-xs text-ink-2">
+                                  Overview docs: <a href="https://developers.telnyx.com/docs/overview" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">developers.telnyx.com/docs/overview</a>
+                                </p>
+                              </div>
+                            )}
+                            {service.id === "plivo" && (
+                              <div className="space-y-1">
+                                <p className="text-xs text-ink-2">
+                                  Get your auth credentials in the <a href="https://console.plivo.com/" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">Plivo Console</a>
+                                </p>
+                                <p className="text-xs text-ink-2">
+                                  Use this for voice and messaging workflows that your agents can trigger.
+                                </p>
+                                <p className="text-xs text-ink-2">
+                                  Platform overview: <a href="https://www.plivo.com/" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">plivo.com</a>
+                                </p>
+                              </div>
+                            )}
+                            {service.id === "vapi" && (
+                              <div className="space-y-1">
+                                <p className="text-xs text-ink-2">
+                                  Get your API key in <a href="https://dashboard.vapi.ai" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">dashboard.vapi.ai</a>
+                                </p>
+                                <p className="text-xs text-ink-2">
+                                  Use Vapi for inbound and outbound voice assistant calls tied to your agents.
+                                </p>
+                                <p className="text-xs text-ink-2">
+                                  Quickstart: <a href="https://docs.vapi.ai/quickstart/phone" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">docs.vapi.ai/quickstart/phone</a>
                                 </p>
                               </div>
                             )}
@@ -1682,7 +2041,7 @@ export function SettingsPage() {
           </section>
 
           {/* API Keys */}
-          <section className="card">
+          <section id="settings-api-keys" className="card scroll-mt-24">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="font-semibold text-ink-0">API Keys</h2>
@@ -1951,7 +2310,102 @@ export function SettingsPage() {
             </div>
           </section>
 
-          <section className="card">
+          <section id="settings-cron-jobs" className="card scroll-mt-24">
+            <h2 className="font-semibold text-ink-0">Cron jobs</h2>
+            <p className="mt-1 text-sm text-ink-1">
+              Manage account level scheduled jobs used by board reminders and automations.
+            </p>
+            <form onSubmit={handleCreateSchedule} className="mt-4 rounded-lg border border-surface-3 bg-surface-1 p-3">
+              <div className="grid gap-3 md:grid-cols-[1.2fr_160px_1fr_auto]">
+                <input
+                  type="text"
+                  value={newScheduleName}
+                  onChange={(e) => setNewScheduleName(e.target.value)}
+                  className="input"
+                  placeholder="Job name (e.g. task_reminder)"
+                  required
+                />
+                <select
+                  value={newScheduleKind}
+                  onChange={(e) => setNewScheduleKind(e.target.value as "cron" | "interval")}
+                  className="input"
+                >
+                  <option value="cron">Cron</option>
+                  <option value="interval">Interval</option>
+                </select>
+                {newScheduleKind === "cron" ? (
+                  <input
+                    type="text"
+                    value={newScheduleCronSpec}
+                    onChange={(e) => setNewScheduleCronSpec(e.target.value)}
+                    className="input"
+                    placeholder="0 9 * * *"
+                  />
+                ) : (
+                  <input
+                    type="number"
+                    min={1}
+                    value={newScheduleIntervalMinutes}
+                    onChange={(e) => setNewScheduleIntervalMinutes(Number(e.target.value || 1))}
+                    className="input"
+                    placeholder="Interval (minutes)"
+                  />
+                )}
+                <button type="submit" className="btn-secondary" disabled={savingSchedule}>
+                  {savingSchedule ? "Saving..." : "Add"}
+                </button>
+              </div>
+            </form>
+            <div className="mt-4 space-y-2">
+              {schedules === undefined ? (
+                <p className="text-sm text-ink-1">Loading cron jobs...</p>
+              ) : schedules.length === 0 ? (
+                <p className="text-sm text-ink-1">No cron jobs created yet.</p>
+              ) : (
+                schedules.map((schedule) => (
+                  <div
+                    key={schedule._id}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-surface-3 bg-surface-1 p-3"
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-ink-0">{schedule.jobName}</p>
+                      <p className="text-xs text-ink-2">
+                        {schedule.schedule.kind === "cron"
+                          ? `Cron: ${schedule.schedule.cronspec ?? "not set"}`
+                          : `Every ${Math.max(
+                              1,
+                              Math.round((schedule.schedule.intervalMs ?? 0) / (60 * 1000))
+                            )} minutes`}
+                      </p>
+                      {schedule.lastRun ? (
+                        <p className="mt-1 text-xs text-ink-2">
+                          Last run {new Date(schedule.lastRun).toLocaleString()} ({schedule.lastResult ?? "unknown"})
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleSchedule(schedule._id)}
+                        className="btn-secondary text-xs"
+                      >
+                        {schedule.isActive ? "Pause" : "Resume"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleRemoveSchedule(schedule._id)}
+                        className="rounded border border-red-200 px-2 py-1 text-xs text-red-700 hover:bg-red-50"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+
+          <section id="settings-agent-status" className="card scroll-mt-24">
             <h2 className="font-semibold text-ink-0">Agent status</h2>
             <p className="mt-1 text-sm text-ink-1">
               Live runtime status for your account.
@@ -2006,7 +2460,7 @@ export function SettingsPage() {
           </section>
 
           {/* Security tab (includes rate limits) */}
-          <section className="card">
+          <section id="settings-security" className="card scroll-mt-24">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="font-semibold text-ink-0">Security</h2>
@@ -2124,7 +2578,7 @@ export function SettingsPage() {
           </section>
 
           {/* Danger zone */}
-          <section className="card border-red-200">
+          <section id="settings-danger" className="card border-red-200 scroll-mt-24">
             <h2 className="font-semibold text-red-600">Danger zone</h2>
             <p className="mt-1 text-sm text-ink-1">
               Irreversible actions. Proceed with caution.
@@ -2177,7 +2631,148 @@ export function SettingsPage() {
               </button>
             </div>
           </section>
+          </div>
         </div>
+
+        {showModelHelpModal && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+            onClick={() => setShowModelHelpModal(false)}
+          >
+            <div
+              className="mx-4 flex w-full max-w-3xl max-h-[85vh] flex-col animate-fade-in card overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-3 border-b border-surface-3 pb-3">
+                <div>
+                  <h3 className="font-semibold text-ink-0">LLM model name help</h3>
+                  <p className="mt-1 text-xs text-ink-2">
+                    Use provider docs for exact model IDs. OpenRouter catalog is a live cross-provider discovery source.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowModelHelpModal(false)}
+                  className="rounded p-1 text-ink-2 hover:bg-surface-2"
+                  aria-label="Close model help"
+                >
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="mt-4 min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+                <div className="rounded-lg border border-surface-3 bg-surface-1 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-sm font-medium text-ink-0">Provider model docs</h4>
+                    <p className="text-xs text-ink-2">
+                      Current provider:{" "}
+                      {LLM_PROVIDERS.find((provider) => provider.id === llmProvider)?.name ?? llmProvider}
+                    </p>
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {PROVIDER_MODEL_REFERENCES.map((reference) => {
+                      const isCurrentProvider = reference.id === llmProvider;
+                      return (
+                        <a
+                          key={reference.id}
+                          href={reference.docsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`rounded-lg border p-3 transition-colors ${
+                            isCurrentProvider
+                              ? "border-accent bg-accent/10"
+                              : "border-surface-3 bg-surface-0 hover:bg-surface-2"
+                          }`}
+                        >
+                          <p className="text-sm font-medium text-ink-0">{reference.name}</p>
+                          <p className="mt-1 text-xs text-ink-2 truncate">{reference.examples.join(" · ")}</p>
+                        </a>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-surface-3 bg-surface-1 p-4">
+                  <h4 className="text-sm font-medium text-ink-0">Live catalog (OpenRouter)</h4>
+                  <p className="mt-1 text-xs text-ink-2">
+                    Auto-updated list from OpenRouter. Useful when testing many providers from one place.
+                  </p>
+                  {isLoadingOpenRouterModels ? (
+                    <div className="mt-3 flex items-center gap-2 text-xs text-ink-2">
+                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-surface-3 border-t-accent" />
+                      Loading model catalog...
+                    </div>
+                  ) : openRouterModelLoadError ? (
+                    <p className="mt-3 text-xs text-amber-500">{openRouterModelLoadError}</p>
+                  ) : openRouterModels.length > 0 ? (
+                    <div className="mt-3 max-h-56 overflow-y-auto rounded border border-surface-3">
+                      {openRouterModels.slice(0, 80).map((model) => (
+                        <button
+                          key={model.id}
+                          type="button"
+                          onClick={() => {
+                            setLlmModel(model.id);
+                            setShowModelHelpModal(false);
+                          }}
+                          className="flex w-full items-start justify-between gap-3 border-b border-surface-3 px-3 py-2 text-left last:border-b-0 hover:bg-surface-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm text-ink-0">{model.id}</p>
+                            {model.name ? <p className="mt-0.5 truncate text-xs text-ink-2">{model.name}</p> : null}
+                          </div>
+                          <span className="text-xs text-accent">Use</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-xs text-ink-2">No live models returned right now.</p>
+                  )}
+                  <p className="mt-2 text-xs text-ink-2">
+                    Tip: OpenAI-compatible endpoints can use provider-native IDs like `glm-5`.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 flex justify-end border-t border-surface-3 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setShowModelHelpModal(false)}
+                  className="btn-secondary text-sm"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {confirmDialog && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+            <div className="card mx-4 w-full max-w-md">
+              <h3 className="font-semibold text-ink-0">{confirmDialog.title}</h3>
+              <p className="mt-2 text-sm text-ink-1">{confirmDialog.description}</p>
+              <div className="mt-6 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDialog(null)}
+                  className="btn-secondary"
+                  disabled={confirming}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleConfirmDialog()}
+                  className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                  disabled={confirming}
+                >
+                  {confirming ? "Working..." : confirmDialog.buttonTitle}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );

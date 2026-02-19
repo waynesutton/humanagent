@@ -122,19 +122,19 @@ export function LandingPage() {
                 <span className="text-green-600">+</span> Base username routes resolve to your default agent
               </div>
               <div className="text-ink-2">
-                <span className="text-green-600">+</span> Agent email: <span className="text-ink-1">{"{username}"}@humanai.gent</span>
+                <span className="text-green-600">+</span> Agent email: <span className="text-ink-1">{"{username}"}@humana.gent</span>
               </div>
               <div className="text-ink-2">
                 <span className="text-green-600">+</span> Agent phone: <span className="text-ink-1">+1 (xxx) xxx-xxxx</span>
               </div>
               <div className="text-ink-2">
-                <span className="text-green-600">+</span> Public page: <span className="text-ink-1">humanai.gent/{"{username}"}</span>
+                <span className="text-green-600">+</span> Public page: <span className="text-ink-1">humana.gent/{"{username}"}</span>
               </div>
               <div className="text-ink-2">
-                <span className="text-green-600">+</span> Profile llms (aggregate): <span className="text-ink-1">humanai.gent/{"{username}"}/llms.txt</span>
+                <span className="text-green-600">+</span> Profile llms (aggregate): <span className="text-ink-1">humana.gent/{"{username}"}/llms.txt</span>
               </div>
               <div className="text-ink-2">
-                <span className="text-green-600">+</span> Agent llms (persona): <span className="text-ink-1">humanai.gent/{"{username}"}/{"{agent-slug}"}/llms.txt</span>
+                <span className="text-green-600">+</span> Agent llms (persona): <span className="text-ink-1">humana.gent/{"{username}"}/{"{agent-slug}"}/llms.txt</span>
               </div>
             </div>
           </div>
@@ -386,7 +386,7 @@ const features = [
   },
   {
     title: "Agent phone",
-    description: "A voice-capable number where your agent can answer calls and handle SMS via Twilio.",
+    description: "A voice-capable number where your agent can answer calls and handle SMS via Twilio, Telnyx, Plivo, or Vapi.",
     icon: (
       <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
@@ -495,8 +495,8 @@ const capabilities = [
     ),
   },
   {
-    title: "Voice calls via ElevenLabs",
-    description: "Your agent can answer phone calls with a realistic AI voice.",
+    title: "Voice-ready providers",
+    description: "Your agents can run inbound and outbound voice workflows with Twilio, Telnyx, Plivo, Vapi, and optional ElevenLabs voices.",
     icon: (
       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
@@ -533,6 +533,9 @@ const providers = [
   "xAI",
   "AgentMail",
   "Twilio",
+  "Telnyx",
+  "Plivo",
+  "Vapi",
   "ElevenLabs",
   "Resend",
   "X API",

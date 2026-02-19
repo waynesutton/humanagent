@@ -1,4 +1,4 @@
-import { query, internalQuery } from "../_generated/server";
+import { query, internalQuery, internalMutation } from "../_generated/server";
 import { v } from "convex/values";
 import { authedMutation, authedQuery, optionalAuthQuery } from "../lib/functions";
 import { internal } from "../_generated/api";
@@ -908,6 +908,154 @@ export const unpublish = authedMutation({
 // ============================================================
 // Internal queries
 // ============================================================
+
+export const createFromAgent = internalMutation({
+  args: {
+    userId: v.id("users"),
+    agentId: v.optional(v.id("agents")),
+    name: v.string(),
+    bio: v.optional(v.string()),
+    capabilities: v.optional(
+      v.array(
+        v.object({
+          name: v.string(),
+          description: v.string(),
+        })
+      )
+    ),
+  },
+  returns: v.id("skills"),
+  handler: async (ctx, args) => {
+    const identityName = args.name.trim();
+    if (!identityName) {
+      throw new Error("Skill name is required");
+    }
+    const identityBio = args.bio?.trim() || "Created by your agent runtime.";
+
+    if (args.agentId) {
+      const agent = await ctx.db.get(args.agentId);
+      if (!agent || agent.userId !== args.userId) {
+        throw new Error("Agent not found for user");
+      }
+    }
+
+    const now = Date.now();
+    const skillId = await ctx.db.insert("skills", {
+      userId: args.userId,
+      agentId: args.agentId,
+      version: 1,
+      identity: {
+        name: identityName.slice(0, MAX_NAME_LENGTH),
+        bio: identityBio.slice(0, MAX_BIO_LENGTH),
+      },
+      capabilities:
+        args.capabilities?.slice(0, MAX_CAPABILITIES).map((capability) => ({
+          name: clip(cleanLine(capability.name), 64),
+          description: clip(cleanLine(capability.description), 320),
+        })) ?? [],
+      knowledgeDomains: [],
+      permissions: {
+        public: ["send_message", "get_capabilities"],
+        authenticated: ["check_availability", "request_meeting"],
+        trusted: ["*"],
+      },
+      communicationPrefs: {
+        tone: "friendly and professional",
+        timezone: "America/Los_Angeles",
+        availability: "available",
+      },
+      toolDeclarations: [],
+      isPublished: false,
+      isActive: true,
+      updatedAt: now,
+    });
+
+    if (args.agentId) {
+      await ctx.db.insert("skillAgents", {
+        skillId,
+        agentId: args.agentId,
+        userId: args.userId,
+        createdAt: now,
+      });
+    }
+
+    await ctx.scheduler.runAfter(0, internal.functions.llmsTxt.regenerate, {
+      userId: args.userId,
+    });
+
+    return skillId;
+  },
+});
+
+export const updateFromAgent = internalMutation({
+  args: {
+    userId: v.id("users"),
+    agentId: v.optional(v.id("agents")),
+    skillId: v.id("skills"),
+    name: v.optional(v.string()),
+    bio: v.optional(v.string()),
+    capabilities: v.optional(
+      v.array(
+        v.object({
+          name: v.string(),
+          description: v.string(),
+        })
+      )
+    ),
+    isActive: v.optional(v.boolean()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const skill = await ctx.db.get(args.skillId);
+    if (!skill || skill.userId !== args.userId) {
+      throw new Error("Skill not found");
+    }
+    if (args.agentId) {
+      const agent = await ctx.db.get(args.agentId);
+      if (!agent || agent.userId !== args.userId) {
+        throw new Error("Agent not found for user");
+      }
+    }
+
+    const patch: Record<string, unknown> = {
+      updatedAt: Date.now(),
+      version: skill.version + 1,
+    };
+
+    if (args.name !== undefined || args.bio !== undefined) {
+      patch.identity = {
+        ...skill.identity,
+        ...(args.name !== undefined
+          ? { name: clip(cleanLine(args.name), MAX_NAME_LENGTH) }
+          : {}),
+        ...(args.bio !== undefined
+          ? { bio: clip(cleanLine(args.bio), MAX_BIO_LENGTH) }
+          : {}),
+      };
+    }
+
+    if (args.capabilities !== undefined) {
+      patch.capabilities = args.capabilities
+        .slice(0, MAX_CAPABILITIES)
+        .map((capability) => ({
+          name: clip(cleanLine(capability.name), 64),
+          description: clip(cleanLine(capability.description), 320),
+        }))
+        .filter((capability) => capability.name && capability.description);
+    }
+
+    if (args.isActive !== undefined) {
+      patch.isActive = args.isActive;
+    }
+
+    await ctx.db.patch(args.skillId, patch);
+
+    await ctx.scheduler.runAfter(0, internal.functions.llmsTxt.regenerate, {
+      userId: args.userId,
+    });
+    return null;
+  },
+});
 
 // Get first skill for a user (for backwards compatibility)
 export const getByUserId = internalQuery({

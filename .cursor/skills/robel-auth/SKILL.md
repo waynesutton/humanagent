@@ -64,6 +64,34 @@ Never assume one install path.
 
 If the project uses pnpm or bun, translate the same GitHub dependency pinning pattern.
 
+## GitHub OAuth setup instructions for end users
+
+When the user asks for clearer GitHub auth onboarding text, include this guidance in the README where OAuth providers are explained.
+
+Required link:
+
+- `https://github.com/settings/developers`
+
+Recommended README content:
+
+1. Go to GitHub Developer Settings:
+   - `https://github.com/settings/developers`
+2. Create a new OAuth App.
+3. Set:
+   - Homepage URL = app frontend URL (same as `SITE_URL`)
+   - Authorization callback URL = `https://<deployment>.convex.site/api/auth/callback/github`
+4. Copy Client ID and Client Secret.
+5. Set Convex env vars:
+   - `AUTH_GITHUB_ID`
+   - `AUTH_GITHUB_SECRET`
+6. Confirm `SITE_URL` is configured.
+7. Deploy and test sign in.
+
+Important implementation note for this repo:
+
+- GitHub auth should be documented with callback path `/api/auth/callback/github`.
+- In this codebase, GitHub OAuth is conditionally enabled only when `AUTH_GITHUB_ID`, `AUTH_GITHUB_SECRET`, and `CONVEX_SITE_URL` are present.
+
 ## Baseline Convex wiring patterns
 
 Always verify exact API names from upstream before coding. API names can change over time.

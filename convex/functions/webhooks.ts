@@ -6,6 +6,7 @@ import {
 } from "../_generated/server";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import type { ActionCtx } from "../_generated/server";
 
 const MAX_RETRY_ATTEMPTS = 5;
 const INITIAL_RETRY_DELAY_MS = 30_000;
@@ -118,11 +119,7 @@ export const retryAgentmailWebhooks = internalAction({
 });
 
 async function processAgentmailEventPayload(
-  ctx: {
-    runQuery: (...args: Array<any>) => Promise<any>;
-    runMutation: (...args: Array<any>) => Promise<any>;
-    runAction: (...args: Array<any>) => Promise<any>;
-  },
+  ctx: Pick<ActionCtx, "runQuery" | "runMutation" | "runAction">,
   payload: string
 ) {
   const event = JSON.parse(payload) as {
@@ -258,9 +255,7 @@ async function processAgentmailEventPayload(
     let outboundSent = false;
     let outboundError: string | undefined;
     if (inboundMessageId) {
-      const agentmailReply = (internal as Record<string, any>)[
-        "functions/agentmail"
-      ].replyToMessage;
+      const agentmailReply = internal.functions.agentmail.replyToMessage;
       const sendResult = await ctx.runAction(agentmailReply, {
         userId,
         inboxAddress: recipientEmail,

@@ -87,7 +87,7 @@ export default defineSchema({
         tokenBudget: v.number(),
       })
     ),
-    // AgentMail inbox address (e.g., wayne-work@humanai.gent)
+    // AgentMail inbox address (e.g., wayne-work@humana.gent)
     agentEmail: v.optional(v.string()),
     // Agent phone number via Twilio
     agentPhone: v.optional(v.string()),
@@ -259,6 +259,9 @@ export default defineSchema({
       // Integrations
       v.literal("agentmail"),
       v.literal("twilio"),
+      v.literal("telnyx"),
+      v.literal("plivo"),
+      v.literal("vapi"),
       v.literal("elevenlabs"),
       v.literal("resend"),
       v.literal("github"),
@@ -517,16 +520,53 @@ export default defineSchema({
     ),
     boardColumnId: v.optional(v.id("boardColumns")),
     isPublic: v.boolean(),
+    outcomeSummary: v.optional(v.string()), // Short completion summary shown in task details
+    outcomeLinks: v.optional(v.array(v.string())), // Optional external result links
+    outcomeFileId: v.optional(v.id("_storage")), // Full report stored in Convex file storage when >8000 chars
+    outcomeImages: v.optional(v.array(v.id("_storage"))), // Generated image outputs
+    outcomeAudioId: v.optional(v.id("_storage")), // TTS audio narration of the outcome
+    outcomeVideoUrl: v.optional(v.string()), // External video URL or storage reference
+    parentTaskId: v.optional(v.id("tasks")), // Subtask parent reference for multi-step tasks
+    toolCallLog: v.optional(v.array(v.object({
+      toolName: v.string(),
+      input: v.optional(v.any()),
+      output: v.optional(v.any()),
+      durationMs: v.optional(v.number()),
+      calledAt: v.number(),
+    }))), // Record of tools called during task execution
+    workflowSteps: v.optional(v.array(v.object({
+      label: v.string(),
+      status: v.union(
+        v.literal("pending"),
+        v.literal("in_progress"),
+        v.literal("completed"),
+        v.literal("failed"),
+        v.literal("skipped")
+      ),
+      startedAt: v.number(),
+      completedAt: v.optional(v.number()),
+      durationMs: v.optional(v.number()),
+      detail: v.optional(v.string()),
+    }))),
     isArchived: v.optional(v.boolean()), // Whether task is archived
     archivedAt: v.optional(v.number()), // When task was archived
     createdAt: v.number(),
+    targetCompletionAt: v.optional(v.number()), // Planned completion target timestamp
+    doNowAt: v.optional(v.number()), // When "Do now" was triggered
     completedAt: v.optional(v.number()),
+    outcomeEmailStatus: v.optional(
+      v.union(v.literal("queued"), v.literal("sent"), v.literal("failed"))
+    ),
+    outcomeEmailLastAttemptAt: v.optional(v.number()),
+    outcomeEmailSentAt: v.optional(v.number()),
+    outcomeEmailError: v.optional(v.string()),
   })
     .index("by_userId", ["userId"])
     .index("by_agentId", ["agentId"])
     .index("by_userId_projectId", ["userId", "projectId"])
     .index("by_userId_status", ["userId", "status"])
-    .index("by_userId_archived", ["userId", "isArchived"]),
+    .index("by_userId_archived", ["userId", "isArchived"])
+    .index("by_parentTaskId", ["parentTaskId"]),
 
   // Task comments for collaboration context on board tasks.
   taskComments: defineTable({
