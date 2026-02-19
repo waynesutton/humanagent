@@ -256,6 +256,7 @@ export const platformApi = {
       deleteNode: api.functions.knowledgeGraph.deleteNode,
       linkNodes: api.functions.knowledgeGraph.linkNodes,
       unlinkNodes: api.functions.knowledgeGraph.unlinkNodes,
+      triggerAutoGenerate: api.functions.knowledgeGraph.triggerAutoGenerate,
     },
     users: {
       getByUsername: api.functions.users.getByUsername,

@@ -1052,7 +1052,7 @@ export function BoardPage() {
 
               {/* Workflow pipeline view */}
               {workflowSteps && workflowSteps.length > 0 && (
-                <details className="group mt-5" open={detailTask.status === "in_progress"}>
+                <details className="group mt-5 rounded-lg border border-surface-3 bg-surface-1 p-4" open={detailTask.status === "in_progress"}>
                   <summary className="flex cursor-pointer items-center gap-2 text-sm font-medium text-ink-0">
                     <svg className="size-4 text-ink-2 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />

@@ -70,8 +70,18 @@ export const speakTaskOutcome = action({
     });
     if (!taskInfo) return null;
 
-    const text = taskInfo.outcomeSummary;
-    if (!text?.trim()) return null;
+    const rawText = taskInfo.outcomeSummary;
+    if (!rawText?.trim()) return null;
+
+    // Strip any internal Convex IDs so they are never spoken by TTS
+    const CONVEX_ID_RE = /\b(?:task(?:Id)?[\s=:"]*)?[a-z0-9]{28,36}\b/gi;
+    const text = rawText.replace(CONVEX_ID_RE, (match) => {
+      const clean = match.replace(/[^a-z0-9]/gi, "");
+      if (clean.length < 28 || clean.length > 36) return match;
+      if (!/[a-z]/i.test(clean) || !/[0-9]/.test(clean)) return match;
+      return "";
+    }).replace(/\n{3,}/g, "\n\n").trim();
+    if (!text) return null;
 
     // Determine which agent to use for voice config
     let agentId = args.agentId ?? taskInfo.agentId ?? undefined;

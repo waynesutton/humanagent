@@ -388,6 +388,39 @@ async function callMistral(
   };
 }
 
+/**
+ * Shared LLM call router used by processMessage and auto-generate features.
+ * Picks the right provider call function based on config.
+ */
+async function callLLMProvider(
+  provider: string,
+  apiKey: string,
+  model: string,
+  messages: ChatMessage[],
+  baseUrl?: string
+): Promise<{ content: string; tokensUsed: number }> {
+  switch (provider) {
+    case "openrouter":
+      return callOpenRouter(apiKey, model, messages);
+    case "anthropic":
+      return callAnthropic(apiKey, model, messages);
+    case "openai":
+      return callOpenAI(apiKey, model, messages, baseUrl);
+    case "deepseek":
+      return callDeepSeek(apiKey, model, messages, baseUrl);
+    case "google":
+      return callGemini(apiKey, model, messages);
+    case "mistral":
+      return callMistral(apiKey, model, messages);
+    case "minimax":
+      return callMiniMax(apiKey, model, messages, baseUrl);
+    case "kimi":
+      return callKimi(apiKey, model, messages, baseUrl);
+    default:
+      return callOpenAI(apiKey, model, messages, baseUrl);
+  }
+}
+
 // Define the return type for processMessage
 interface ProcessMessageResult {
   response: string;
@@ -808,15 +841,35 @@ function pickTaskOutcome(args: {
   const actionOutcome = args.actionOutcomeSummary?.trim() || "";
 
   if (cleanOutcome && !isBoilerplateOutcome(cleanOutcome)) {
-    return cleanOutcome.slice(0, 8000);
+    return stripInternalIds(cleanOutcome).slice(0, 8000);
   }
   if (actionOutcome && !isBoilerplateOutcome(actionOutcome)) {
-    return actionOutcome.slice(0, 8000);
+    return stripInternalIds(actionOutcome).slice(0, 8000);
   }
 
   return args.status === "failed"
     ? "Task failed, but the agent did not return a detailed failure report. Run it again for full details."
     : "Task marked completed, but the agent did not return detailed output. Run it again for full results.";
+}
+
+// Convex IDs are 32-char alphanumeric strings. Strip patterns like
+// "Task ks74jc9z0t743mq80fw1y4558181fahx" so they never leak into
+// displayed outcomes or TTS audio.
+const CONVEX_ID_PATTERN = /\b(?:task(?:Id)?[\s=:"]*)?[a-z0-9]{28,36}\b/gi;
+
+function stripInternalIds(text: string): string {
+  return text
+    .replace(CONVEX_ID_PATTERN, (match) => {
+      // Only strip if it looks like a Convex ID (mixed letters+digits, 28-36 chars)
+      const clean = match.replace(/[^a-z0-9]/gi, "");
+      if (clean.length < 28 || clean.length > 36) return match;
+      const hasLetters = /[a-z]/i.test(clean);
+      const hasDigits = /[0-9]/.test(clean);
+      if (!hasLetters || !hasDigits) return match;
+      return "";
+    })
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function buildConfigDiagnosticResponse(args: {
@@ -1096,72 +1149,13 @@ export const processMessage = internalAction({
     let result: { content: string; tokensUsed: number };
 
     try {
-      switch (config.provider) {
-        case "openrouter":
-          result = await callOpenRouter(
-            credentials.apiKey,
-            config.model,
-            messages
-          );
-          break;
-        case "anthropic":
-          result = await callAnthropic(
-            credentials.apiKey,
-            config.model,
-            messages
-          );
-          break;
-        case "openai":
-          result = await callOpenAI(
-            credentials.apiKey,
-            config.model,
-            messages,
-            credentials.baseUrl
-          );
-          break;
-        case "deepseek":
-          result = await callDeepSeek(
-            credentials.apiKey,
-            config.model,
-            messages,
-            credentials.baseUrl
-          );
-          break;
-        case "google":
-          result = await callGemini(credentials.apiKey, config.model, messages);
-          break;
-        case "mistral":
-          result = await callMistral(
-            credentials.apiKey,
-            config.model,
-            messages
-          );
-          break;
-        case "minimax":
-          result = await callMiniMax(
-            credentials.apiKey,
-            config.model,
-            messages,
-            credentials.baseUrl
-          );
-          break;
-        case "kimi":
-          result = await callKimi(
-            credentials.apiKey,
-            config.model,
-            messages,
-            credentials.baseUrl
-          );
-          break;
-        default:
-          // Custom provider - use OpenAI-compatible endpoint
-          result = await callOpenAI(
-            credentials.apiKey,
-            config.model,
-            messages,
-            credentials.baseUrl
-          );
-      }
+      result = await callLLMProvider(
+        config.provider,
+        credentials.apiKey,
+        config.model,
+        messages,
+        credentials.baseUrl
+      );
     } catch (error) {
       console.error("LLM call failed:", error);
       const errorMessage = getErrorMessage(error);
@@ -1462,3 +1456,239 @@ export const processMessage = internalAction({
     };
   },
 });
+
+/**
+ * Auto-generate knowledge graph nodes from a skill's existing data.
+ * Calls the user's configured LLM to analyze skill identity, capabilities,
+ * and domains, then creates interconnected knowledge nodes.
+ */
+export const autoGenerateGraph = internalAction({
+  args: {
+    userId: v.id("users"),
+    agentId: v.id("agents"),
+    skillId: v.id("skills"),
+  },
+  returns: v.object({
+    nodesCreated: v.number(),
+    linksCreated: v.number(),
+    error: v.optional(v.string()),
+  }),
+  handler: async (ctx, args) => {
+    // Load agent config and credentials
+    const config: {
+      provider: string;
+      model: string;
+      systemPrompt: string;
+      capabilities: string[];
+    } | null = await ctx.runQuery(internal.agent.queries.getAgentConfig, {
+      userId: args.userId,
+      agentId: args.agentId,
+    });
+
+    if (!config) {
+      return { nodesCreated: 0, linksCreated: 0, error: "No agent configuration found" };
+    }
+
+    const credentials = await ctx.runQuery(
+      internal.agent.queries.getProviderCredentials,
+      { userId: args.userId, provider: config.provider }
+    );
+
+    if (!credentials?.apiKey) {
+      return { nodesCreated: 0, linksCreated: 0, error: "No LLM credentials configured" };
+    }
+
+    // Load skill data
+    const skill = await ctx.runQuery(internal.functions.knowledgeGraph.getSkillForAutoGen, {
+      skillId: args.skillId,
+    });
+
+    if (!skill) {
+      return { nodesCreated: 0, linksCreated: 0, error: "Skill not found" };
+    }
+
+    // Load existing nodes to avoid duplicates
+    const existingNodes: Array<{ title: string; nodeType: string; _id: string }> =
+      await ctx.runQuery(internal.functions.knowledgeGraph.listNodesInternal, {
+        skillId: args.skillId,
+      });
+
+    const existingTitles = existingNodes.map((n) => n.title.toLowerCase());
+
+    const prompt = buildAutoGenPrompt(skill, existingNodes);
+
+    const messages: ChatMessage[] = [
+      {
+        role: "system",
+        content:
+          "You are a knowledge architect. You create structured knowledge graphs for AI agents. " +
+          "Respond ONLY with valid JSON. No markdown, no explanation, just the JSON array.",
+      },
+      { role: "user", content: prompt },
+    ];
+
+    let llmResult: { content: string; tokensUsed: number };
+    try {
+      llmResult = await callLLMProvider(
+        config.provider,
+        credentials.apiKey,
+        config.model,
+        messages,
+        credentials.baseUrl
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "LLM call failed";
+      return { nodesCreated: 0, linksCreated: 0, error: msg };
+    }
+
+    // Parse the JSON response
+    let generatedNodes: Array<{
+      title: string;
+      description: string;
+      content: string;
+      nodeType: string;
+      tags: string[];
+      linksTo: string[];
+    }>;
+
+    try {
+      const cleaned = llmResult.content
+        .replace(/```json\s*/g, "")
+        .replace(/```\s*/g, "")
+        .trim();
+      generatedNodes = JSON.parse(cleaned);
+      if (!Array.isArray(generatedNodes)) {
+        throw new Error("Response is not an array");
+      }
+    } catch {
+      return {
+        nodesCreated: 0,
+        linksCreated: 0,
+        error: "LLM returned invalid JSON. Try again.",
+      };
+    }
+
+    // Filter out nodes that already exist
+    const newNodes = generatedNodes.filter(
+      (n) => !existingTitles.includes(n.title.toLowerCase())
+    );
+
+    if (newNodes.length === 0) {
+      return { nodesCreated: 0, linksCreated: 0 };
+    }
+
+    // Create nodes and track title -> ID mapping
+    const validTypes = ["concept", "technique", "reference", "moc", "claim", "procedure"] as const;
+    const titleToId = new Map<string, Id<"knowledgeNodes">>();
+
+    // Include existing nodes in title map for cross-linking
+    for (const existing of existingNodes) {
+      titleToId.set(existing.title.toLowerCase(), existing._id as Id<"knowledgeNodes">);
+    }
+
+    let nodesCreated = 0;
+    for (const node of newNodes.slice(0, 25)) {
+      const nodeType = validTypes.includes(node.nodeType as typeof validTypes[number])
+        ? (node.nodeType as typeof validTypes[number])
+        : "concept";
+
+      try {
+        const nodeId: Id<"knowledgeNodes"> = await ctx.runMutation(
+          internal.functions.knowledgeGraph.createNodeFromAgent,
+          {
+            userId: args.userId,
+            agentId: args.agentId,
+            skillId: args.skillId,
+            title: node.title,
+            description: node.description || node.title,
+            content: node.content || node.description || node.title,
+            nodeType: nodeType,
+            tags: (node.tags ?? []).slice(0, 10),
+          }
+        );
+        titleToId.set(node.title.toLowerCase(), nodeId);
+        nodesCreated++;
+      } catch (createError) {
+        console.warn("Auto-gen node create failed:", createError);
+      }
+    }
+
+    // Create links based on the linksTo field
+    let linksCreated = 0;
+    for (const node of newNodes) {
+      const sourceId = titleToId.get(node.title.toLowerCase());
+      if (!sourceId || !node.linksTo) continue;
+
+      for (const targetTitle of node.linksTo) {
+        const targetId = titleToId.get(targetTitle.toLowerCase());
+        if (!targetId || sourceId === targetId) continue;
+
+        try {
+          await ctx.runMutation(internal.functions.knowledgeGraph.linkNodesFromAgent, {
+            userId: args.userId,
+            sourceNodeId: sourceId,
+            targetNodeId: targetId,
+          });
+          linksCreated++;
+        } catch {
+          // Duplicate link or invalid, skip
+        }
+      }
+    }
+
+    return { nodesCreated, linksCreated };
+  },
+});
+
+function buildAutoGenPrompt(
+  skill: {
+    name: string;
+    bio: string;
+    capabilities: Array<{ name: string; description: string }>;
+    knowledgeDomains: string[];
+  },
+  existingNodes: Array<{ title: string; nodeType: string }>
+): string {
+  const parts = [
+    `Analyze this AI agent skill and generate a knowledge graph.`,
+    ``,
+    `Skill: ${skill.name}`,
+    `Description: ${skill.bio}`,
+  ];
+
+  if (skill.capabilities.length > 0) {
+    parts.push(`Capabilities:`);
+    for (const cap of skill.capabilities) {
+      parts.push(`  - ${cap.name}: ${cap.description}`);
+    }
+  }
+
+  if (skill.knowledgeDomains.length > 0) {
+    parts.push(`Knowledge domains: ${skill.knowledgeDomains.join(", ")}`);
+  }
+
+  if (existingNodes.length > 0) {
+    parts.push(`\nExisting nodes (do NOT duplicate these):`);
+    for (const n of existingNodes) {
+      parts.push(`  - "${n.title}" (${n.nodeType})`);
+    }
+  }
+
+  parts.push(`
+Generate 8 to 15 knowledge nodes that capture the key concepts, techniques,
+and procedures this agent needs to know. Create a well-connected graph.
+
+Each node must have:
+- title: short unique name (under 120 chars)
+- description: one-line summary (under 200 chars)
+- content: detailed knowledge (200 to 500 chars, markdown ok)
+- nodeType: one of "concept", "technique", "reference", "moc", "claim", "procedure"
+- tags: array of 2 to 5 tags
+- linksTo: array of titles of OTHER nodes in this list that this node relates to
+
+Include one "moc" (Map of Content) node that acts as the central index linking to all major topics.
+
+Return a JSON array. No markdown fences, no explanation. Just the array.`);
+
+  return parts.join("\n");
+}

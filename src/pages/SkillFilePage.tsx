@@ -6,6 +6,7 @@ import { Id } from "../../convex/_generated/dataModel";
 import { notify } from "../lib/notify";
 import { useEscapeKey } from "../hooks/useEscapeKey";
 import { platformApi } from "../lib/platformApi";
+import { KnowledgeGraphCanvas } from "../components/KnowledgeGraphCanvas";
 
 interface Capability {
   name: string;
@@ -1068,7 +1069,11 @@ export function SkillFilePage() {
                 </section>
 
                 {/* Knowledge Graph */}
-                <KnowledgeGraphSection skillId={currentSkill._id} />
+                <KnowledgeGraphSection
+                  skillId={currentSkill._id}
+                  assignedAgentIds={getAssignedAgentIds(currentSkill._id)}
+                  agents={agents}
+                />
               </div>
             </div>
           ) : (
@@ -1122,18 +1127,33 @@ interface KnowledgeNode {
   updatedAt: number;
 }
 
-function KnowledgeGraphSection({ skillId }: { skillId: Id<"skills"> }) {
+function KnowledgeGraphSection({
+  skillId,
+  assignedAgentIds,
+  agents,
+}: {
+  skillId: Id<"skills">;
+  assignedAgentIds: Id<"agents">[];
+  agents: AgentOption[];
+}) {
   const nodes = useQuery(platformApi.convex.knowledgeGraph.listNodes, { skillId }) as KnowledgeNode[] | undefined;
   const stats = useQuery(platformApi.convex.knowledgeGraph.getGraphStats, { skillId });
+  const llmProviderStatus = useQuery(platformApi.convex.settings.getCredentialStatus);
   const createNode = useMutation(platformApi.convex.knowledgeGraph.createNode);
   const updateNode = useMutation(platformApi.convex.knowledgeGraph.updateNode);
   const deleteNode = useMutation(platformApi.convex.knowledgeGraph.deleteNode);
   const linkNodesMut = useMutation(platformApi.convex.knowledgeGraph.linkNodes);
   const unlinkNodesMut = useMutation(platformApi.convex.knowledgeGraph.unlinkNodes);
+  const triggerAutoGenerate = useMutation(platformApi.convex.knowledgeGraph.triggerAutoGenerate);
 
   const [showCreateNode, setShowCreateNode] = useState(false);
   const [selectedNode, setSelectedNode] = useState<Id<"knowledgeNodes"> | null>(null);
   const [editingNode, setEditingNode] = useState<Id<"knowledgeNodes"> | null>(null);
+  const [viewMode, setViewMode] = useState<"list" | "graph">("list");
+  const [generating, setGenerating] = useState(false);
+  const [autoGenAgent, setAutoGenAgent] = useState<Id<"agents"> | "">(
+    assignedAgentIds[0] ?? ""
+  );
 
   // Create form state
   const [newTitle, setNewTitle] = useState("");
@@ -1172,6 +1192,33 @@ function KnowledgeGraphSection({ skillId }: { skillId: Id<"skills"> }) {
       setEditTags(editNode.tags.join(", "));
     }
   }, [editNode?._id]);
+
+  // Check if any LLM provider is configured
+  const hasLlmConfigured = llmProviderStatus
+    ? Object.values(llmProviderStatus).some(
+        (s) => s && typeof s === "object" && "configured" in s && s.configured
+      )
+    : false;
+
+  async function handleAutoGenerate() {
+    if (!autoGenAgent || generating) return;
+    setGenerating(true);
+    try {
+      await triggerAutoGenerate({
+        skillId,
+        agentId: autoGenAgent as Id<"agents">,
+      });
+      notify.success(
+        "Graph generation started",
+        "Your LLM is analyzing the skill. Nodes will appear shortly."
+      );
+    } catch (error) {
+      notify.error("Could not start generation", error);
+    } finally {
+      // Keep generating state for a few seconds since the action runs async
+      setTimeout(() => setGenerating(false), 8000);
+    }
+  }
 
   async function handleCreateNode() {
     if (!newTitle.trim() || !newContent.trim()) return;
@@ -1255,7 +1302,8 @@ function KnowledgeGraphSection({ skillId }: { skillId: Id<"skills"> }) {
 
   return (
     <section className="card">
-      <div className="flex items-center justify-between">
+      {/* Header with view toggle and actions */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="font-semibold text-ink-0">Knowledge Graph</h2>
           <p className="mt-1 text-sm text-ink-1">
@@ -1274,12 +1322,100 @@ function KnowledgeGraphSection({ skillId }: { skillId: Id<"skills"> }) {
             )}
           </p>
         </div>
-        <button onClick={() => setShowCreateNode(true)} className="btn-secondary text-sm">
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-          </svg>
-          Add node
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {/* View mode toggle */}
+          {nodeCount > 0 && (
+            <div className="flex rounded-lg border border-surface-3 overflow-hidden">
+              <button
+                onClick={() => setViewMode("list")}
+                className={`px-2.5 py-1.5 text-xs transition-colors ${
+                  viewMode === "list"
+                    ? "bg-surface-2 text-ink-0"
+                    : "text-ink-2 hover:text-ink-1"
+                }`}
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.007v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.007v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
+                </svg>
+              </button>
+              <button
+                onClick={() => setViewMode("graph")}
+                className={`px-2.5 py-1.5 text-xs transition-colors ${
+                  viewMode === "graph"
+                    ? "bg-surface-2 text-ink-0"
+                    : "text-ink-2 hover:text-ink-1"
+                }`}
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+                </svg>
+              </button>
+            </div>
+          )}
+          <button onClick={() => setShowCreateNode(true)} className="btn-secondary text-sm">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            Add node
+          </button>
+        </div>
+      </div>
+
+      {/* Auto Generate section */}
+      <div className="mt-4 rounded-lg border border-surface-3 bg-surface-1 p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium text-ink-0">Auto Generate</p>
+            <p className="mt-0.5 text-xs text-ink-2">
+              {hasLlmConfigured
+                ? "Use your connected LLM to analyze this skill and generate a knowledge graph automatically."
+                : "Connect an LLM provider in Settings to enable auto generation."}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {agents.length > 1 && hasLlmConfigured && (
+              <select
+                value={autoGenAgent}
+                onChange={(e) => setAutoGenAgent(e.target.value as Id<"agents">)}
+                className="input text-xs py-1.5"
+                disabled={generating}
+              >
+                <option value="">Select agent</option>
+                {agents.map((agent) => (
+                  <option key={agent._id} value={agent._id}>
+                    {agent.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              onClick={handleAutoGenerate}
+              disabled={!hasLlmConfigured || !autoGenAgent || generating}
+              className="btn-accent text-sm"
+              title={
+                !hasLlmConfigured
+                  ? "Configure an LLM provider in Settings first"
+                  : !autoGenAgent
+                    ? "Select an agent"
+                    : undefined
+              }
+            >
+              {generating ? (
+                <>
+                  <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z" />
+                  </svg>
+                  Auto Generate
+                </>
+              )}
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Create node form */}
@@ -1328,133 +1464,161 @@ function KnowledgeGraphSection({ skillId }: { skillId: Id<"skills"> }) {
         </div>
       )}
 
-      {/* Node list */}
-      <div className="mt-4 space-y-2">
-        {!nodes ? (
-          <div className="flex justify-center py-6">
-            <div className="h-5 w-5 animate-spin rounded-full border-2 border-surface-3 border-t-accent" />
-          </div>
-        ) : nodes.length === 0 ? (
-          <div className="rounded-lg bg-surface-1 py-8 text-center">
-            <svg className="mx-auto h-8 w-8 text-ink-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
-            </svg>
-            <p className="mt-2 text-sm text-ink-1">No knowledge nodes yet</p>
-            <p className="mt-1 text-xs text-ink-2">
-              Add nodes to build a traversable knowledge graph. Your agent will navigate to relevant nodes automatically during tasks.
-            </p>
-          </div>
-        ) : (
-          nodes.map((node) => (
-            <div
-              key={node._id}
-              className={`rounded-lg border p-3 transition-colors ${
-                selectedNode === node._id
-                  ? "border-accent bg-accent/5"
-                  : linkingFrom
-                    ? "border-surface-3 bg-surface-1 hover:border-accent cursor-pointer"
-                    : "border-surface-3 bg-surface-1 hover:bg-surface-2"
-              }`}
-              onClick={() => {
-                if (linkingFrom && linkingFrom !== node._id) {
-                  handleLinkTo(node._id);
-                } else {
-                  setSelectedNode(selectedNode === node._id ? null : node._id);
-                }
-              }}
-            >
-              <div className="flex items-start justify-between">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium text-sm text-ink-0">{node.title}</span>
-                    <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-ink-2 uppercase tracking-wide">
-                      {node.nodeType}
-                    </span>
-                    {node.linkedNodeIds.length > 0 && (
-                      <span className="text-[10px] text-ink-2">
-                        {node.linkedNodeIds.length} link{node.linkedNodeIds.length !== 1 ? "s" : ""}
+      {/* Graph view */}
+      {viewMode === "graph" && nodes && nodes.length > 0 && (
+        <div className="mt-4">
+          <KnowledgeGraphCanvas
+            nodes={nodes}
+            selectedNodeId={selectedNode}
+            onNodeClick={(id) =>
+              setSelectedNode(selectedNode === id ? null : (id as Id<"knowledgeNodes">))
+            }
+          />
+        </div>
+      )}
+
+      {/* Node list (shown in list mode or as detail below graph) */}
+      {(viewMode === "list" || !nodes?.length) && (
+        <div className="mt-4 space-y-2">
+          {!nodes ? (
+            <div className="flex justify-center py-6">
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-surface-3 border-t-accent" />
+            </div>
+          ) : nodes.length === 0 ? (
+            <div className="rounded-lg bg-surface-1 py-8 text-center">
+              <svg className="mx-auto h-8 w-8 text-ink-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+              </svg>
+              <p className="mt-2 text-sm text-ink-1">No knowledge nodes yet</p>
+              <p className="mt-1 text-xs text-ink-2">
+                Add nodes manually or use Auto Generate to build a traversable knowledge graph.
+              </p>
+            </div>
+          ) : (
+            nodes.map((node) => (
+              <div
+                key={node._id}
+                className={`rounded-lg border p-3 transition-colors ${
+                  selectedNode === node._id
+                    ? "border-accent bg-accent/5"
+                    : linkingFrom
+                      ? "border-surface-3 bg-surface-1 hover:border-accent cursor-pointer"
+                      : "border-surface-3 bg-surface-1 hover:bg-surface-2"
+                }`}
+                onClick={() => {
+                  if (linkingFrom && linkingFrom !== node._id) {
+                    handleLinkTo(node._id);
+                  } else {
+                    setSelectedNode(selectedNode === node._id ? null : node._id);
+                  }
+                }}
+              >
+                <div className="flex items-start justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-sm text-ink-0">{node.title}</span>
+                      <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-ink-2 uppercase tracking-wide">
+                        {node.nodeType}
                       </span>
+                      {node.linkedNodeIds.length > 0 && (
+                        <span className="text-[10px] text-ink-2">
+                          {node.linkedNodeIds.length} link{node.linkedNodeIds.length !== 1 ? "s" : ""}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-0.5 text-xs text-ink-1 line-clamp-1">{node.description}</p>
+                    {node.tags.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {node.tags.slice(0, 5).map((tag) => (
+                          <span key={tag} className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-2">{tag}</span>
+                        ))}
+                      </div>
                     )}
                   </div>
-                  <p className="mt-0.5 text-xs text-ink-1 line-clamp-1">{node.description}</p>
-                  {node.tags.length > 0 && (
-                    <div className="mt-1.5 flex flex-wrap gap-1">
-                      {node.tags.slice(0, 5).map((tag) => (
-                        <span key={tag} className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-2">{tag}</span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-1 ml-2 shrink-0">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setLinkingFrom(node._id); }}
-                    className="rounded p-1.5 text-ink-2 hover:bg-surface-2 transition-colors"
-                    title="Link to another node"
-                  >
-                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-2.818a4.5 4.5 0 00-1.242-7.244l-4.5-4.5a4.5 4.5 0 00-6.364 6.364L4.28 8.57" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setEditingNode(node._id); }}
-                    className="rounded p-1.5 text-ink-2 hover:bg-surface-2 transition-colors"
-                    title="Edit node"
-                  >
-                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleDeleteNode(node._id); }}
-                    className="rounded p-1.5 text-ink-2 hover:bg-red-500/10 hover:text-red-500 transition-colors"
-                    title="Delete node"
-                  >
-                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-
-              {/* Expanded detail view */}
-              {selectedNode === node._id && !linkingFrom && (
-                <div className="mt-3 border-t border-surface-3 pt-3">
-                  <div className="prose prose-sm max-w-none text-ink-0">
-                    <pre className="whitespace-pre-wrap text-xs bg-surface-2 rounded p-3 overflow-x-auto">{node.content}</pre>
+                  <div className="flex items-center gap-1 ml-2 shrink-0">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setLinkingFrom(node._id); }}
+                      className="rounded p-1.5 text-ink-2 hover:bg-surface-2 transition-colors"
+                      title="Link to another node"
+                    >
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-2.818a4.5 4.5 0 00-1.242-7.244l-4.5-4.5a4.5 4.5 0 00-6.364 6.364L4.28 8.57" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setEditingNode(node._id); }}
+                      className="rounded p-1.5 text-ink-2 hover:bg-surface-2 transition-colors"
+                      title="Edit node"
+                    >
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDeleteNode(node._id); }}
+                      className="rounded p-1.5 text-ink-2 hover:bg-red-500/10 hover:text-red-500 transition-colors"
+                      title="Delete node"
+                    >
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
                   </div>
-                  {node.linkedNodeIds.length > 0 && (
-                    <div className="mt-3">
-                      <p className="text-xs font-medium text-ink-0 mb-1.5">Linked nodes</p>
-                      <div className="space-y-1">
-                        {node.linkedNodeIds.map((linkedId) => {
-                          const linked = nodes.find((n) => n._id === linkedId);
-                          if (!linked) return null;
-                          return (
-                            <div key={linkedId} className="flex items-center justify-between rounded bg-surface-2 px-2.5 py-1.5">
-                              <button
-                                onClick={(e) => { e.stopPropagation(); setSelectedNode(linkedId); }}
-                                className="text-xs text-ink-2-interactive hover:underline"
-                              >
-                                {linked.title}
-                              </button>
-                              <button
-                                onClick={(e) => { e.stopPropagation(); handleUnlink(node._id, linkedId); }}
-                                className="text-[10px] text-ink-2 hover:text-red-500"
-                              >
-                                unlink
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
                 </div>
-              )}
-            </div>
-          ))
-        )}
-      </div>
+
+                {/* Expanded detail view */}
+                {selectedNode === node._id && !linkingFrom && (
+                  <div className="mt-3 border-t border-surface-3 pt-3">
+                    <div className="prose prose-sm max-w-none text-ink-0">
+                      <pre className="whitespace-pre-wrap text-xs bg-surface-2 rounded p-3 overflow-x-auto">{node.content}</pre>
+                    </div>
+                    {node.linkedNodeIds.length > 0 && (
+                      <div className="mt-3">
+                        <p className="text-xs font-medium text-ink-0 mb-1.5">Linked nodes</p>
+                        <div className="space-y-1">
+                          {node.linkedNodeIds.map((linkedId) => {
+                            const linked = nodes.find((n) => n._id === linkedId);
+                            if (!linked) return null;
+                            return (
+                              <div key={linkedId} className="flex items-center justify-between rounded bg-surface-2 px-2.5 py-1.5">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setSelectedNode(linkedId); }}
+                                  className="text-xs text-ink-2-interactive hover:underline"
+                                >
+                                  {linked.title}
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleUnlink(node._id, linkedId); }}
+                                  className="text-[10px] text-ink-2 hover:text-red-500"
+                                >
+                                  unlink
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Selected node detail panel (shown below graph view) */}
+      {viewMode === "graph" && selectedNode && nodes && (
+        <SelectedNodeDetail
+          node={nodes.find((n) => n._id === selectedNode) ?? null}
+          nodes={nodes}
+          onClose={() => setSelectedNode(null)}
+          onEdit={(id) => setEditingNode(id)}
+          onDelete={handleDeleteNode}
+          onUnlink={handleUnlink}
+          onNavigate={setSelectedNode}
+        />
+      )}
 
       {/* Edit node modal */}
       {editingNode && editNode && (
@@ -1497,5 +1661,89 @@ function KnowledgeGraphSection({ skillId }: { skillId: Id<"skills"> }) {
         </div>
       )}
     </section>
+  );
+}
+
+/** Detail panel shown below graph view when a node is selected */
+function SelectedNodeDetail({
+  node,
+  nodes,
+  onClose,
+  onEdit,
+  onDelete,
+  onUnlink,
+  onNavigate,
+}: {
+  node: KnowledgeNode | null;
+  nodes: KnowledgeNode[];
+  onClose: () => void;
+  onEdit: (id: Id<"knowledgeNodes">) => void;
+  onDelete: (id: Id<"knowledgeNodes">) => void;
+  onUnlink: (source: Id<"knowledgeNodes">, target: Id<"knowledgeNodes">) => void;
+  onNavigate: (id: Id<"knowledgeNodes">) => void;
+}) {
+  if (!node) return null;
+
+  return (
+    <div className="mt-3 rounded-lg border border-accent/30 bg-surface-1 p-4 animate-fade-in">
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-sm text-ink-0">{node.title}</span>
+            <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-ink-2 uppercase tracking-wide">
+              {node.nodeType}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-ink-1">{node.description}</p>
+        </div>
+        <div className="flex items-center gap-1 ml-2 shrink-0">
+          <button onClick={() => onEdit(node._id)} className="rounded p-1.5 text-ink-2 hover:bg-surface-2 transition-colors" title="Edit">
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+            </svg>
+          </button>
+          <button onClick={() => onDelete(node._id)} className="rounded p-1.5 text-ink-2 hover:bg-red-500/10 hover:text-red-500 transition-colors" title="Delete">
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+          <button onClick={onClose} className="rounded p-1.5 text-ink-2 hover:bg-surface-2 transition-colors" title="Close">
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <pre className="mt-3 whitespace-pre-wrap text-xs bg-surface-2 rounded p-3 overflow-x-auto text-ink-0 max-h-48 overflow-y-auto">
+        {node.content}
+      </pre>
+      {node.tags.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {node.tags.map((tag) => (
+            <span key={tag} className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-2">{tag}</span>
+          ))}
+        </div>
+      )}
+      {node.linkedNodeIds.length > 0 && (
+        <div className="mt-3">
+          <p className="text-xs font-medium text-ink-0 mb-1.5">Linked nodes</p>
+          <div className="flex flex-wrap gap-1.5">
+            {node.linkedNodeIds.map((linkedId) => {
+              const linked = nodes.find((n) => n._id === linkedId);
+              if (!linked) return null;
+              return (
+                <button
+                  key={linkedId}
+                  onClick={() => onNavigate(linkedId)}
+                  className="rounded bg-surface-2 px-2 py-1 text-xs text-ink-2-interactive hover:bg-surface-3 transition-colors"
+                >
+                  {linked.title}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

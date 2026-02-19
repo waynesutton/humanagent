@@ -81,6 +81,29 @@ Session updates complete on 2026-02-19. Last updated 2026-02-19.
 
 ## Completed
 
+- [x] Knowledge Graph Auto Generate and Live Graph View (2026-02-19)
+  - [x] LLM-powered auto generation of knowledge graph nodes: `autoGenerateGraph` internal action in `convex/agent/runtime.ts` reads skill identity, capabilities, and domains, calls user's configured LLM, parses JSON response, creates nodes and bidirectional links
+  - [x] Public `triggerAutoGenerate` mutation in `knowledgeGraph.ts` gates on auth and schedules the background action
+  - [x] Frontend Auto Generate button in KnowledgeGraphSection with agent selector dropdown for multi-agent setups and LLM credential status gating (disabled when no provider configured)
+  - [x] Interactive force-directed Canvas graph visualization in `src/components/KnowledgeGraphCanvas.tsx` with zero external dependencies. Nodes color-coded by type (concept, technique, reference, moc, claim, procedure), edges show relationships, drag/pan/zoom, hover tooltips, click to select. Legend and zoom controls overlay.
+  - [x] List/graph view toggle in KnowledgeGraphSection header
+  - [x] `SelectedNodeDetail` panel below graph view showing full content, tags, and linked node navigation
+  - [x] Refactored `callLLMProvider` shared helper in `convex/agent/runtime.ts` to deduplicate provider routing switch block; `processMessage` now uses it
+  - [x] Added `getSkillForAutoGen` and `listNodesInternal` internal queries in `knowledgeGraph.ts` for the auto-generate pipeline
+  - [x] PRD at `prds/knowledge-graph-auto-mode.md`
+- [x] Strip internal Convex task IDs from outcome text, UI, and TTS audio (2026-02-18)
+  - [x] Added LLM prompt instruction in `crons.ts` telling the model to never include task IDs in human-readable response text
+  - [x] Added `stripInternalIds` sanitizer in `convex/agent/runtime.ts` that regex-removes Convex ID patterns (28-36 char alphanumeric strings) from outcome text before storing to DB
+  - [x] Added ID stripping in `convex/functions/voice.ts` at TTS consumption point so even existing DB records with leaked IDs are never spoken by ElevenLabs or OpenAI
+  - [x] Three layers of defense: prompt instruction, storage-time sanitizer, TTS-time sanitizer
+- [x] Fix React Router v7 future flag warnings and TTS error handling (2026-02-18)
+  - [x] Added `v7_startTransition` and `v7_relativeSplatPath` future flags to `BrowserRouter` in `src/main.tsx` to silence console warnings
+  - [x] Added 401/403 error handling in `convex/agent/tts.ts` for both ElevenLabs and OpenAI TTS with clean user-facing messages instead of raw provider JSON dumps
+- [x] Replace native datetime-local picker with custom DateTimePicker component (2026-02-18)
+  - [x] Built `src/components/DateTimePicker.tsx` with calendar grid, 12-hour time columns, AM/PM toggle, Clear/Today actions
+  - [x] Uses site design tokens: surface/ink/accent colors, 1px corners, DM Sans font
+  - [x] Supports `inline` variant (compact pill for task creation row) and `field` variant (full width for edit modal)
+  - [x] Replaced both `<input type="datetime-local">` instances in `BoardPage.tsx`
 - [x] Fix tasks stuck in "In Progress" forever (2026-02-19)
   - [x] Root cause: `doNow` and `createTask` mutations set task status but never triggered agent processing; tasks waited for cron that only runs for agents with active scheduling
   - [x] `doNow` now calls `ctx.scheduler.runAfter(0, processAgentTasks)` to process immediately
@@ -123,11 +146,6 @@ Session updates complete on 2026-02-19. Last updated 2026-02-19.
 - [x] Voice TTS features: ElevenLabs and OpenAI TTS backend actions, chat audio playback, voice picker dropdown on AgentsPage (2026-02-18)
 - [x] Cap public profile activity feed to 10 items with scroll (2026-02-18)
 - [x] Make "Request an agent to do a task" a collapsible toggle on public profile (2026-02-18)
-- [x] Replace native datetime-local picker with custom DateTimePicker component (2026-02-18)
-  - [x] Built `src/components/DateTimePicker.tsx` with calendar grid, 12-hour time columns, AM/PM toggle, Clear/Today actions
-  - [x] Uses site design tokens: surface/ink/accent colors, 1px corners, DM Sans font
-  - [x] Supports `inline` variant (compact pill for task creation row) and `field` variant (full width for edit modal)
-  - [x] Replaced both `<input type="datetime-local">` instances in `BoardPage.tsx`
 - [x] Fix grid alignment on public profile page (items-stretch) (2026-02-18)
 - [x] Fix "Show/Hide" label clipping in request-task toggle button (2026-02-18)
 - [x] Agent outcome and response pipeline features from PRD (2026-02-18)
@@ -161,6 +179,7 @@ Session updates complete on 2026-02-19. Last updated 2026-02-19.
   - [x] Remove generic runtime fallback outcome text (`"Done. I applied the requested app update."`)
   - [x] Add boilerplate detector and outcome selection guard in `convex/agent/runtime.ts` for `update_task_status`
   - [x] Add stricter scheduled-task prompt rules in `convex/crons.ts` (explicitly ban placeholder replies and require per-task detailed markdown sections)
+- [x] Add padding and visual container to Pipeline section in BoardPage task detail modal (2026-02-19)
 - [x] Redesign task details modal in BoardPage for readability and mobile (2026-02-19)
   - [x] Widen modal from `max-w-2xl` to `max-w-3xl` for better outcome readability
   - [x] Remove raw task ID from header, show task description as title with status badges and date inline

@@ -5,6 +5,7 @@
 import { v } from "convex/values";
 import { authedMutation, authedQuery } from "../lib/functions";
 import { internalMutation, internalQuery } from "../_generated/server";
+import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 
 const MAX_TITLE_LENGTH = 120;
@@ -236,6 +237,33 @@ export const deleteNode = authedMutation({
     const node = await ctx.db.get(nodeId);
     if (!node || node.userId !== ctx.userId) throw new Error("Node not found");
     await ctx.db.delete(nodeId);
+    return null;
+  },
+});
+
+/**
+ * Trigger auto-generation of knowledge graph nodes for a skill via LLM.
+ * Schedules the generation as a background action.
+ */
+export const triggerAutoGenerate = authedMutation({
+  args: {
+    skillId: v.id("skills"),
+    agentId: v.id("agents"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const skill = await ctx.db.get(args.skillId);
+    if (!skill || skill.userId !== ctx.userId) throw new Error("Skill not found");
+
+    const agent = await ctx.db.get(args.agentId);
+    if (!agent || agent.userId !== ctx.userId) throw new Error("Agent not found");
+
+    await ctx.scheduler.runAfter(0, internal.agent.runtime.autoGenerateGraph, {
+      userId: ctx.userId,
+      agentId: args.agentId,
+      skillId: args.skillId,
+    });
+
     return null;
   },
 });
@@ -492,6 +520,56 @@ export const createNodeFromAgent = internalMutation({
       createdAt: now,
       updatedAt: now,
     });
+  },
+});
+
+/**
+ * Load skill data for auto-generation (internal, no auth check).
+ */
+export const getSkillForAutoGen = internalQuery({
+  args: { skillId: v.id("skills") },
+  returns: v.union(
+    v.object({
+      name: v.string(),
+      bio: v.string(),
+      capabilities: v.array(v.object({ name: v.string(), description: v.string() })),
+      knowledgeDomains: v.array(v.string()),
+    }),
+    v.null()
+  ),
+  handler: async (ctx, { skillId }) => {
+    const skill = await ctx.db.get(skillId);
+    if (!skill) return null;
+    return {
+      name: skill.identity.name,
+      bio: skill.identity.bio,
+      capabilities: (skill.capabilities ?? []).map((c) => ({
+        name: c.name,
+        description: c.description,
+      })),
+      knowledgeDomains: skill.knowledgeDomains ?? [],
+    };
+  },
+});
+
+/**
+ * List nodes for a skill (internal, no auth check).
+ */
+export const listNodesInternal = internalQuery({
+  args: { skillId: v.id("skills") },
+  returns: v.array(
+    v.object({
+      _id: v.id("knowledgeNodes"),
+      title: v.string(),
+      nodeType: v.string(),
+    })
+  ),
+  handler: async (ctx, { skillId }) => {
+    const nodes = await ctx.db
+      .query("knowledgeNodes")
+      .withIndex("by_skillId", (q) => q.eq("skillId", skillId))
+      .take(100);
+    return nodes.map((n) => ({ _id: n._id, title: n.title, nodeType: n.nodeType }));
   },
 });
 

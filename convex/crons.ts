@@ -446,6 +446,8 @@ export const processAgentTasks = internalAction({
       taskLines.push("");
     }
 
+    taskLines.push("IMPORTANT: Never mention taskId values in your human-readable response text. Task IDs are internal identifiers for the <app_actions> block only. Your written response should only contain the actual answer or result.");
+    taskLines.push("");
     taskLines.push("INSTRUCTIONS:");
     taskLines.push("1. For each task, do the work and write the full result in your response.");
     taskLines.push("   - If asked to write, research, list, answer, joke, etc., produce the full output.");

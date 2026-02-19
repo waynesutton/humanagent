@@ -5,8 +5,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Knowledge Graph Auto Generate: "Auto Generate" button in the Knowledge Graph section calls the user's configured LLM to analyze a skill's identity, capabilities, and domains, then creates 8 to 15 interconnected knowledge nodes with a central MOC index node. Gated on having an LLM provider configured. Agent selector dropdown for multi-agent setups. Backend `autoGenerateGraph` internal action in `convex/agent/runtime.ts` and `triggerAutoGenerate` public mutation in `convex/functions/knowledgeGraph.ts`.
+- Live Knowledge Graph visualization: interactive Canvas-based force-directed graph view in `src/components/KnowledgeGraphCanvas.tsx`. Zero external dependencies. Nodes color-coded by type (concept blue, technique green, reference purple, moc orange, claim amber, procedure pink), edges show bidirectional links, drag to reposition nodes, pan and zoom the viewport, hover for type/tag tooltips, click to select. Legend and zoom controls overlay. List/graph view toggle button in the Knowledge Graph section header.
+- `SelectedNodeDetail` panel below graph view showing full content, tags, and clickable linked node navigation when a node is selected in graph mode.
+- `callLLMProvider` shared helper in `convex/agent/runtime.ts` that routes to the correct provider call function, replacing the duplicated switch block in `processMessage`. All 9 providers (OpenRouter, Anthropic, OpenAI, DeepSeek, Google, Mistral, MiniMax, Kimi, custom) go through one function.
+- `getSkillForAutoGen` and `listNodesInternal` internal queries in `convex/functions/knowledgeGraph.ts` for the auto-generate pipeline.
+- PRD at `prds/knowledge-graph-auto-mode.md`.
+
+### Changed
+
+- Pipeline section in BoardPage task detail modal now renders inside a padded card container (`rounded-lg border border-surface-3 bg-surface-1 p-4`) so the collapsible workflow view has proper spacing and visual separation from surrounding content
+
 ### Fixed
 
+- Silenced React Router v6 future flag console warnings (`v7_startTransition`, `v7_relativeSplatPath`) by opting in early on `BrowserRouter` in `src/main.tsx`
+- ElevenLabs TTS 401/403 errors now return a clean user-facing message ("API key is invalid or account quota exceeded") instead of dumping the raw provider JSON into the console and stack trace. Same handling added for OpenAI TTS 401/403 in `convex/agent/tts.ts`.
+- Internal Convex task IDs (like `ks74jc9z0t743mq80fw1y4558181fahx`) no longer leak into outcome text, UI, TTS audio, or email. Three layers of defense: (1) LLM prompt in `crons.ts` now instructs the model to keep IDs out of human-readable text, (2) `stripInternalIds` sanitizer in `runtime.ts` removes Convex ID patterns before storing `outcomeSummary`, (3) `voice.ts` strips IDs at TTS consumption time so even existing DB records with leaked IDs are never spoken aloud.
 - Tasks stuck in "In Progress" forever: `doNow` and `createTask` mutations now immediately schedule `processAgentTasks` via `ctx.scheduler.runAfter(0, ...)` so the agent processes the task right away instead of waiting for the 5-minute cron (which only ran for agents with active scheduling enabled).
 - Added 30-minute staleness guard in `processAgentTasks`: tasks that remain `in_progress` for over 30 minutes are force-completed with a timeout message so users are never left with permanently stuck tasks.
 - Rewrote `processAgentTasks` LLM prompt to be more directive: explicitly bans re-assigning tasks to `in_progress`, requires a `completed` or `failed` status for every task in the response, and provides clearer action block format examples. Simple questions and requests now complete on the first processing pass.
