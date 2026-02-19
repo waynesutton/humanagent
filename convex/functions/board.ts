@@ -432,6 +432,14 @@ export const createTask = authedMutation({
       isPublic,
     });
 
+    // Immediately schedule agent processing so the task doesn't wait for the cron
+    if (args.agentId) {
+      await ctx.scheduler.runAfter(0, internal.crons.processAgentTasks, {
+        userId: ctx.userId,
+        agentId: args.agentId,
+      });
+    }
+
     return taskId;
   },
 });
@@ -860,6 +868,14 @@ export const doNow = authedMutation({
       },
       isPublic: task.isPublic,
     });
+
+    // Immediately schedule agent processing so the task gets worked on right away
+    if (task.agentId) {
+      await ctx.scheduler.runAfter(0, internal.crons.processAgentTasks, {
+        userId: ctx.userId,
+        agentId: task.agentId,
+      });
+    }
 
     return null;
   },

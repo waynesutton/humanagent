@@ -471,6 +471,21 @@ type CallToolAction = {
   input?: Record<string, unknown>;
 };
 
+type CreateKnowledgeNodeAction = {
+  type: "create_knowledge_node";
+  title: string;
+  description: string;
+  content: string;
+  nodeType: "concept" | "technique" | "reference" | "moc" | "claim" | "procedure";
+  tags?: string[];
+};
+
+type LinkKnowledgeNodesAction = {
+  type: "link_knowledge_nodes";
+  sourceNodeId: string;
+  targetNodeId: string;
+};
+
 type AgentRuntimeAction =
   | CreateTaskAction
   | CreateFeedItemAction
@@ -482,7 +497,9 @@ type AgentRuntimeAction =
   | DelegateToAgentAction
   | GenerateImageAction
   | GenerateAudioAction
-  | CallToolAction;
+  | CallToolAction
+  | CreateKnowledgeNodeAction
+  | LinkKnowledgeNodesAction;
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -720,6 +737,35 @@ function parseAgentActions(rawResponse: string): {
           type: "call_tool",
           toolName: toolName.slice(0, 120),
           input,
+        });
+      } else if (type === "create_knowledge_node") {
+        const title = typeof candidate.title === "string" ? candidate.title.trim() : "";
+        const description = typeof candidate.description === "string" ? candidate.description.trim() : "";
+        const content = typeof candidate.content === "string" ? candidate.content : "";
+        if (!title || !content) continue;
+        const validNodeTypes = ["concept", "technique", "reference", "moc", "claim", "procedure"] as const;
+        const nodeType = typeof candidate.nodeType === "string" && validNodeTypes.includes(candidate.nodeType as typeof validNodeTypes[number])
+          ? (candidate.nodeType as typeof validNodeTypes[number])
+          : "concept";
+        const tags = Array.isArray(candidate.tags)
+          ? candidate.tags.filter((t): t is string => typeof t === "string").slice(0, 20)
+          : undefined;
+        actions.push({
+          type: "create_knowledge_node",
+          title: title.slice(0, 120),
+          description: (description || title).slice(0, 200),
+          content: content.slice(0, 12000),
+          nodeType,
+          tags,
+        });
+      } else if (type === "link_knowledge_nodes") {
+        const sourceNodeId = typeof candidate.sourceNodeId === "string" ? candidate.sourceNodeId.trim() : "";
+        const targetNodeId = typeof candidate.targetNodeId === "string" ? candidate.targetNodeId.trim() : "";
+        if (!sourceNodeId || !targetNodeId) continue;
+        actions.push({
+          type: "link_knowledge_nodes",
+          sourceNodeId,
+          targetNodeId,
         });
       }
     }
@@ -997,11 +1043,49 @@ export const processMessage = internalAction({
       }
     }
 
-    wfRecord("Context build", step4Start, "completed", `${contextMessages.length} messages, ${semanticMessages.length} memories`);
+    // 4b. Load relevant knowledge graph nodes for task context routing
+    let knowledgeContext = "";
+    try {
+      const knowledgeNodes: Array<{
+        _id: string;
+        title: string;
+        description: string;
+        content?: string;
+        nodeType: string;
+        tags: string[];
+        relevanceReason: string;
+      }> = await ctx.runQuery(
+        internal.functions.knowledgeGraph.loadRelevantKnowledge,
+        {
+          userId: args.userId,
+          agentId: args.agentId,
+          query: securityResult.sanitizedInput,
+          maxNodes: 5,
+        }
+      );
+
+      if (knowledgeNodes.length > 0) {
+        const sections = knowledgeNodes.map((node) => {
+          if (node.content) {
+            return `### ${node.title}\n${node.content}`;
+          }
+          return `- **${node.title}**: ${node.description}`;
+        });
+        knowledgeContext = `\n\n## Relevant Knowledge\n${sections.join("\n\n")}`;
+      }
+    } catch (knowledgeError) {
+      console.warn("Knowledge graph traversal failed:", knowledgeError);
+    }
+
+    wfRecord("Context build", step4Start, "completed", `${contextMessages.length} messages, ${semanticMessages.length} memories${knowledgeContext ? ", knowledge graph active" : ""}`);
 
     // 5. Build full message array
+    const systemPromptWithKnowledge = knowledgeContext
+      ? config.systemPrompt + knowledgeContext
+      : config.systemPrompt;
+
     const messages: ChatMessage[] = [
-      { role: "system", content: config.systemPrompt },
+      { role: "system", content: systemPromptWithKnowledge },
       ...contextMessages,
       ...semanticMessages,
       { role: "user", content: securityResult.sanitizedInput },
@@ -1269,6 +1353,22 @@ export const processMessage = internalAction({
         } else if (action.type === "call_tool") {
           // Placeholder: tool execution requires skill-declared tool registry
           console.log(`call_tool requested: toolName="${action.toolName}"`);
+        } else if (action.type === "create_knowledge_node") {
+          await ctx.runMutation(internal.functions.knowledgeGraph.createNodeFromAgent, {
+            userId: args.userId,
+            agentId: args.agentId,
+            title: action.title,
+            description: action.description,
+            content: action.content,
+            nodeType: action.nodeType,
+            tags: action.tags,
+          });
+        } else if (action.type === "link_knowledge_nodes") {
+          await ctx.runMutation(internal.functions.knowledgeGraph.linkNodesFromAgent, {
+            userId: args.userId,
+            sourceNodeId: action.sourceNodeId as Id<"knowledgeNodes">,
+            targetNodeId: action.targetNodeId as Id<"knowledgeNodes">,
+          });
         }
       } catch (actionError) {
         console.warn("Agent action execution failed:", actionError);

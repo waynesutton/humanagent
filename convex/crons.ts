@@ -7,6 +7,7 @@ import { cronJobs } from "convex/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { internalAction, internalMutation } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 
 const crons = cronJobs();
 
@@ -346,6 +347,9 @@ export const agentScheduler = internalMutation({
   },
 });
 
+// Stale task threshold: tasks in_progress for longer than this are force-completed
+const STALE_TASK_MS = 30 * 60 * 1000; // 30 minutes
+
 // Process pending/in-progress tasks for a scheduled agent via the LLM runtime
 export const processAgentTasks = internalAction({
   args: {
@@ -367,14 +371,51 @@ export const processAgentTasks = internalAction({
     // Nothing to process if no actionable tasks
     if (pendingTasks.length === 0 && inProgressTasks.length === 0) return null;
 
+    const now = Date.now();
+
+    // Force-complete stale in_progress tasks that the LLM has failed to finish
+    const staleTasks: typeof inProgressTasks = [];
+    const activeTasks: typeof inProgressTasks = [];
+    for (const task of inProgressTasks) {
+      const t = task as { _id: string; doNowAt?: number; createdAt: number };
+      const startedAt = t.doNowAt ?? t.createdAt;
+      if (now - startedAt > STALE_TASK_MS) {
+        staleTasks.push(task);
+      } else {
+        activeTasks.push(task);
+      }
+    }
+
+    // Force-complete stale tasks so they don't stay stuck forever
+    for (const task of staleTasks) {
+      const t = task as { _id: string; description: string };
+      try {
+        await ctx.runMutation(internal.functions.board.updateTaskFromAgent, {
+          userId: args.userId,
+          agentId: args.agentId,
+          taskId: t._id as Id<"tasks">,
+          status: "completed",
+          outcomeSummary: "Task was auto-completed after being in progress for over 30 minutes without a result. The agent may not have been able to produce output for this request. You can re-create the task to try again.",
+          source: "dashboard",
+        });
+        console.log(`processAgentTasks: force-completed stale task ${t._id}: "${t.description.slice(0, 80)}"`);
+      } catch (staleError) {
+        console.warn("Failed to force-complete stale task:", t._id, staleError);
+      }
+    }
+
+    // If only stale tasks existed and they're now handled, we're done
+    if (pendingTasks.length === 0 && activeTasks.length === 0) return null;
+
     // Build a structured prompt the LLM can act on with app_actions
     const taskLines: Array<string> = [];
-    taskLines.push("SCHEDULED TASK CHECK: You MUST process the tasks below and respond with app_actions to update their status.");
-    taskLines.push("This is an automated run. Do not ask questions. Take action on every task.");
+    taskLines.push("TASK PROCESSING: You MUST complete every task below in a SINGLE response.");
+    taskLines.push("This is an automated run. Do not ask questions. Do not defer. Complete everything now.");
+    taskLines.push("CRITICAL: You MUST include an <app_actions> block at the end. Tasks without a status update will be stuck forever.");
     taskLines.push("");
 
     if (pendingTasks.length > 0) {
-      taskLines.push(`PENDING TASKS (move to in_progress or completed):`);
+      taskLines.push(`PENDING TASKS (complete immediately or mark failed if impossible):`);
       for (const task of pendingTasks.slice(0, 10)) {
         const t = task as { _id: string; description: string; targetCompletionAt?: number };
         const eta = t.targetCompletionAt
@@ -385,9 +426,9 @@ export const processAgentTasks = internalAction({
       taskLines.push("");
     }
 
-    if (inProgressTasks.length > 0) {
-      taskLines.push(`IN-PROGRESS TASKS (complete with outcomeSummary or keep in_progress):`);
-      for (const task of inProgressTasks.slice(0, 10)) {
+    if (activeTasks.length > 0) {
+      taskLines.push(`IN-PROGRESS TASKS (MUST complete now with outcomeSummary):`);
+      for (const task of activeTasks.slice(0, 10)) {
         const t = task as { _id: string; description: string; targetCompletionAt?: number; doNowAt?: number };
         const eta = t.targetCompletionAt
           ? ` (due ${new Date(t.targetCompletionAt).toISOString().slice(0, 10)})`
@@ -405,30 +446,19 @@ export const processAgentTasks = internalAction({
       taskLines.push("");
     }
 
-    // Instruct the agent to do the actual work first, then report status
     taskLines.push("INSTRUCTIONS:");
-    taskLines.push("1. For each task above, READ the task description carefully and PERFORM the requested work.");
-    taskLines.push("   - If the task asks you to write something, write it in full.");
-    taskLines.push("   - If the task asks you to research or analyze, provide the full result.");
-    taskLines.push("   - If the task asks you to generate a list, generate the complete list.");
-    taskLines.push("   - Do NOT just acknowledge. Actually do the work and include it in your response.");
-    taskLines.push("   - NEVER reply with generic placeholders like 'Processing scheduled tasks.' or 'Done.'");
-    taskLines.push("2. Write ALL the work output in the main body of your response (before <app_actions>).");
-    taskLines.push("   - Include one markdown section per task using this format: '## Task <taskId>' then the detailed result.");
-    taskLines.push("3. After the work output, add an <app_actions> block to update the task status.");
+    taskLines.push("1. For each task, do the work and write the full result in your response.");
+    taskLines.push("   - If asked to write, research, list, answer, joke, etc., produce the full output.");
+    taskLines.push("   - NEVER reply with just 'Done', 'Processing', or any placeholder.");
+    taskLines.push("2. After your response text, you MUST add an <app_actions> block with one update_task_status per task.");
+    taskLines.push("   - For simple questions/requests: set status to 'completed' and put your answer in outcomeSummary.");
+    taskLines.push("   - For tasks you cannot do: set status to 'failed' with a reason.");
+    taskLines.push("   - NEVER set status to 'in_progress'. Tasks are already in progress. Move them to completed or failed.");
+    taskLines.push("3. EVERY task MUST have exactly one update_task_status action. No exceptions.");
     taskLines.push("");
-    taskLines.push("Status action formats:");
-    taskLines.push("  Move to in-progress: {\"type\":\"update_task_status\",\"taskId\":\"TASK_ID\",\"status\":\"in_progress\"}");
-    taskLines.push("  Mark complete:       {\"type\":\"update_task_status\",\"taskId\":\"TASK_ID\",\"status\":\"completed\",\"outcomeSummary\":\"One-line summary of what was done\"}");
-    taskLines.push("  Mark failed:         {\"type\":\"update_task_status\",\"taskId\":\"TASK_ID\",\"status\":\"failed\",\"outcomeSummary\":\"Why it could not be completed\"}");
-    taskLines.push("");
-    taskLines.push("Example — task says 'Write a short poem about rain':");
-    taskLines.push("Rain falls soft on city streets,");
-    taskLines.push("Washing dust from tired concrete.");
-    taskLines.push("Each drop a breath, each puddle clear,");
-    taskLines.push("The world made new, and fresh, and here.");
+    taskLines.push("Format:");
     taskLines.push("<app_actions>");
-    taskLines.push("[{\"type\":\"update_task_status\",\"taskId\":\"abc123\",\"status\":\"completed\",\"outcomeSummary\":\"Wrote requested poem about rain.\"}]");
+    taskLines.push("[{\"type\":\"update_task_status\",\"taskId\":\"ID\",\"status\":\"completed\",\"outcomeSummary\":\"The actual answer or result here\"}]");
     taskLines.push("</app_actions>");
 
     const message = taskLines.join("\n");
@@ -441,7 +471,7 @@ export const processAgentTasks = internalAction({
         channel: "dashboard",
       });
       console.log(
-        `processAgentTasks agent=${String(args.agentId)} tasks=${pendingTasks.length}p/${inProgressTasks.length}ip response=${result.response.slice(0, 200)}`
+        `processAgentTasks agent=${String(args.agentId)} tasks=${pendingTasks.length}p/${activeTasks.length}ip response=${result.response.slice(0, 200)}`
       );
     } catch (error) {
       console.warn("processAgentTasks failed for agent", args.agentId, error);

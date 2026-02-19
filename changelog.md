@@ -5,8 +5,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Tasks stuck in "In Progress" forever: `doNow` and `createTask` mutations now immediately schedule `processAgentTasks` via `ctx.scheduler.runAfter(0, ...)` so the agent processes the task right away instead of waiting for the 5-minute cron (which only ran for agents with active scheduling enabled).
+- Added 30-minute staleness guard in `processAgentTasks`: tasks that remain `in_progress` for over 30 minutes are force-completed with a timeout message so users are never left with permanently stuck tasks.
+- Rewrote `processAgentTasks` LLM prompt to be more directive: explicitly bans re-assigning tasks to `in_progress`, requires a `completed` or `failed` status for every task in the response, and provides clearer action block format examples. Simple questions and requests now complete on the first processing pass.
+
 ### Added
 
+- Knowledge Graph (Skill Graphs): new `knowledgeNodes` table for building traversable knowledge networks that agents can navigate for task context. Each node has a title, scannable description (under 200 chars for progressive disclosure), full markdown content, node type (concept, technique, reference, moc, claim, procedure), tags, and explicit graph edges to other nodes. Supports full text search and vector search indexes.
+- Knowledge graph context routing in agent runtime: after loading conversation history and semantic memory, the agent now searches for relevant knowledge nodes, traverses one hop of linked nodes, and injects the most relevant knowledge into the system prompt as a `## Relevant Knowledge` section. Progressive disclosure: top 3 matches get full content, remaining matches get title and description only.
+- `convex/functions/knowledgeGraph.ts`: full CRUD (create, read, update, delete), bidirectional linking, unlinking, graph traversal query (`loadRelevantKnowledge`), graph stats, and internal mutations for agent runtime (`createNodeFromAgent`, `linkNodesFromAgent`).
+- `create_knowledge_node` and `link_knowledge_nodes` agent action types so agents can build knowledge graphs automatically from task outcomes and learned information. Node types, tags, and descriptions are all structured for progressive disclosure.
+- Knowledge Graph section in SkillFilePage: create, view, edit, delete, and link knowledge nodes per skill. Node list with type badges, tag pills, link counts, expandable content view, linked node navigation, and edit modal. Link mode lets users click two nodes to connect them.
+- `graphIndexNodeId` field on skills table to link a skill to its root MOC (Map of Content) index node.
+- PRD for skill graphs at `prds/skill-graphs.md`.
+- Verified all 7 integration points between knowledge graph and existing features: runtime pipeline ordering, action type union and parser and executor, system prompt docs, schema indexes with optional backwards-compatible fields, platform API contract, SkillFilePage rendering, and internal function reference consistency.
 - Workflow pipeline visualization: CI-style step view (inspired by GitHub Actions) showing agent processing phases with Phosphor icons, status indicators, per-step durations, connector lines, and total elapsed time. Renders in BoardPage task detail panel as a collapsible "Pipeline" section that auto-opens for in-progress tasks.
 - `workflowSteps` field on the tasks table to record each agent pipeline phase (Security scan, Config load, Context build, LLM call, Parse response, Execute actions, Save memory) with timing data. Written once at end of pipeline via `setWorkflowSteps` mutation for minimal DB overhead.
 - `WorkflowView` and `WorkflowViewCompact` components (`src/components/WorkflowView.tsx`) with grouped phase boxes, Phosphor status icons (`CheckCircle`, `XCircle`, `CircleNotch`, `ShieldCheck`, `GearSix`, `Brain`, `Lightning`, `CodeBlock`, `FloppyDisk`), and connector arrows.

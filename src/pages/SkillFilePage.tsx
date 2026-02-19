@@ -5,6 +5,7 @@ import { DashboardLayout } from "../components/layout/DashboardLayout";
 import { Id } from "../../convex/_generated/dataModel";
 import { notify } from "../lib/notify";
 import { useEscapeKey } from "../hooks/useEscapeKey";
+import { platformApi } from "../lib/platformApi";
 
 interface Capability {
   name: string;
@@ -1065,6 +1066,9 @@ export function SkillFilePage() {
                     </div>
                   </div>
                 </section>
+
+                {/* Knowledge Graph */}
+                <KnowledgeGraphSection skillId={currentSkill._id} />
               </div>
             </div>
           ) : (
@@ -1089,5 +1093,409 @@ export function SkillFilePage() {
         </div>
       </div>
     </DashboardLayout>
+  );
+}
+
+// -- Knowledge Graph Section --
+
+const NODE_TYPES = [
+  { value: "concept", label: "Concept" },
+  { value: "technique", label: "Technique" },
+  { value: "reference", label: "Reference" },
+  { value: "moc", label: "Map of Content" },
+  { value: "claim", label: "Claim" },
+  { value: "procedure", label: "Procedure" },
+] as const;
+
+type NodeType = typeof NODE_TYPES[number]["value"];
+
+interface KnowledgeNode {
+  _id: Id<"knowledgeNodes">;
+  title: string;
+  description: string;
+  content: string;
+  nodeType: NodeType;
+  tags: string[];
+  linkedNodeIds: Id<"knowledgeNodes">[];
+  isPublished: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+function KnowledgeGraphSection({ skillId }: { skillId: Id<"skills"> }) {
+  const nodes = useQuery(platformApi.convex.knowledgeGraph.listNodes, { skillId }) as KnowledgeNode[] | undefined;
+  const stats = useQuery(platformApi.convex.knowledgeGraph.getGraphStats, { skillId });
+  const createNode = useMutation(platformApi.convex.knowledgeGraph.createNode);
+  const updateNode = useMutation(platformApi.convex.knowledgeGraph.updateNode);
+  const deleteNode = useMutation(platformApi.convex.knowledgeGraph.deleteNode);
+  const linkNodesMut = useMutation(platformApi.convex.knowledgeGraph.linkNodes);
+  const unlinkNodesMut = useMutation(platformApi.convex.knowledgeGraph.unlinkNodes);
+
+  const [showCreateNode, setShowCreateNode] = useState(false);
+  const [selectedNode, setSelectedNode] = useState<Id<"knowledgeNodes"> | null>(null);
+  const [editingNode, setEditingNode] = useState<Id<"knowledgeNodes"> | null>(null);
+
+  // Create form state
+  const [newTitle, setNewTitle] = useState("");
+  const [newDescription, setNewDescription] = useState("");
+  const [newContent, setNewContent] = useState("");
+  const [newNodeType, setNewNodeType] = useState<NodeType>("concept");
+  const [newTags, setNewTags] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  // Edit form state
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editContent, setEditContent] = useState("");
+  const [editNodeType, setEditNodeType] = useState<NodeType>("concept");
+  const [editTags, setEditTags] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // Link state
+  const [linkingFrom, setLinkingFrom] = useState<Id<"knowledgeNodes"> | null>(null);
+
+  useEscapeKey(() => {
+    setShowCreateNode(false);
+    setSelectedNode(null);
+    setEditingNode(null);
+    setLinkingFrom(null);
+  }, showCreateNode || !!selectedNode || !!editingNode || !!linkingFrom);
+
+  const editNode = nodes?.find((n) => n._id === editingNode);
+
+  useEffect(() => {
+    if (editNode) {
+      setEditTitle(editNode.title);
+      setEditDescription(editNode.description);
+      setEditContent(editNode.content);
+      setEditNodeType(editNode.nodeType);
+      setEditTags(editNode.tags.join(", "));
+    }
+  }, [editNode?._id]);
+
+  async function handleCreateNode() {
+    if (!newTitle.trim() || !newContent.trim()) return;
+    setCreating(true);
+    try {
+      await createNode({
+        skillId,
+        title: newTitle,
+        description: newDescription || newTitle,
+        content: newContent,
+        nodeType: newNodeType,
+        tags: newTags.split(",").map((t) => t.trim()).filter(Boolean),
+      });
+      setShowCreateNode(false);
+      setNewTitle("");
+      setNewDescription("");
+      setNewContent("");
+      setNewNodeType("concept");
+      setNewTags("");
+      notify.success("Knowledge node created");
+    } catch (error) {
+      notify.error("Could not create node", error);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleUpdateNode() {
+    if (!editingNode) return;
+    setSaving(true);
+    try {
+      await updateNode({
+        nodeId: editingNode,
+        title: editTitle,
+        description: editDescription,
+        content: editContent,
+        nodeType: editNodeType,
+        tags: editTags.split(",").map((t) => t.trim()).filter(Boolean),
+      });
+      setEditingNode(null);
+      notify.success("Node updated");
+    } catch (error) {
+      notify.error("Could not update node", error);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDeleteNode(nodeId: Id<"knowledgeNodes">) {
+    try {
+      await deleteNode({ nodeId });
+      if (selectedNode === nodeId) setSelectedNode(null);
+      if (editingNode === nodeId) setEditingNode(null);
+      notify.success("Node deleted");
+    } catch (error) {
+      notify.error("Could not delete node", error);
+    }
+  }
+
+  async function handleLinkTo(targetId: Id<"knowledgeNodes">) {
+    if (!linkingFrom || linkingFrom === targetId) return;
+    try {
+      await linkNodesMut({ sourceNodeId: linkingFrom, targetNodeId: targetId });
+      setLinkingFrom(null);
+      notify.success("Nodes linked");
+    } catch (error) {
+      notify.error("Could not link nodes", error);
+    }
+  }
+
+  async function handleUnlink(sourceId: Id<"knowledgeNodes">, targetId: Id<"knowledgeNodes">) {
+    try {
+      await unlinkNodesMut({ sourceNodeId: sourceId, targetNodeId: targetId });
+      notify.success("Link removed");
+    } catch (error) {
+      notify.error("Could not unlink nodes", error);
+    }
+  }
+
+  const nodeCount = nodes?.length ?? 0;
+
+  return (
+    <section className="card">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="font-semibold text-ink-0">Knowledge Graph</h2>
+          <p className="mt-1 text-sm text-ink-1">
+            Interconnected knowledge nodes your agent traverses for context.
+            {nodeCount > 0 && (
+              <span className="ml-2 text-ink-2">
+                {nodeCount} node{nodeCount !== 1 ? "s" : ""}
+                {stats?.byType && Object.keys(stats.byType).length > 0 && (
+                  <span className="ml-1">
+                    ({Object.entries(stats.byType as Record<string, number>)
+                      .map(([type, count]) => `${count} ${type}`)
+                      .join(", ")})
+                  </span>
+                )}
+              </span>
+            )}
+          </p>
+        </div>
+        <button onClick={() => setShowCreateNode(true)} className="btn-secondary text-sm">
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+          </svg>
+          Add node
+        </button>
+      </div>
+
+      {/* Create node form */}
+      {showCreateNode && (
+        <div className="mt-4 rounded-lg border border-accent/30 bg-surface-1 p-4 space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="block text-xs font-medium text-ink-0">Title</label>
+              <input type="text" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} className="input mt-1" placeholder="Node title" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-ink-0">Type</label>
+              <select value={newNodeType} onChange={(e) => setNewNodeType(e.target.value as NodeType)} className="input mt-1">
+                {NODE_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-ink-0">Description (scannable summary, under 200 chars)</label>
+            <input type="text" value={newDescription} onChange={(e) => setNewDescription(e.target.value)} className="input mt-1" placeholder="Short description for progressive disclosure" maxLength={200} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-ink-0">Content (full knowledge, supports markdown)</label>
+            <textarea value={newContent} onChange={(e) => setNewContent(e.target.value)} className="input mt-1 resize-y min-h-32 font-mono text-sm" placeholder="Full node content. Use [[Node Title]] to reference other nodes." />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-ink-0">Tags (comma separated)</label>
+            <input type="text" value={newTags} onChange={(e) => setNewTags(e.target.value)} className="input mt-1" placeholder="e.g., react, performance, architecture" />
+          </div>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setShowCreateNode(false)} className="btn-secondary text-sm">Cancel</button>
+            <button onClick={handleCreateNode} disabled={creating || !newTitle.trim() || !newContent.trim()} className="btn-accent text-sm">
+              {creating ? "Creating..." : "Create node"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Linking mode banner */}
+      {linkingFrom && (
+        <div className="mt-4 rounded-lg border border-accent bg-accent/10 p-3 text-sm text-ink-0 flex items-center justify-between">
+          <span>
+            Select a target node to link with <strong>{nodes?.find((n) => n._id === linkingFrom)?.title}</strong>
+          </span>
+          <button onClick={() => setLinkingFrom(null)} className="btn-secondary text-xs">Cancel</button>
+        </div>
+      )}
+
+      {/* Node list */}
+      <div className="mt-4 space-y-2">
+        {!nodes ? (
+          <div className="flex justify-center py-6">
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-surface-3 border-t-accent" />
+          </div>
+        ) : nodes.length === 0 ? (
+          <div className="rounded-lg bg-surface-1 py-8 text-center">
+            <svg className="mx-auto h-8 w-8 text-ink-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+            </svg>
+            <p className="mt-2 text-sm text-ink-1">No knowledge nodes yet</p>
+            <p className="mt-1 text-xs text-ink-2">
+              Add nodes to build a traversable knowledge graph. Your agent will navigate to relevant nodes automatically during tasks.
+            </p>
+          </div>
+        ) : (
+          nodes.map((node) => (
+            <div
+              key={node._id}
+              className={`rounded-lg border p-3 transition-colors ${
+                selectedNode === node._id
+                  ? "border-accent bg-accent/5"
+                  : linkingFrom
+                    ? "border-surface-3 bg-surface-1 hover:border-accent cursor-pointer"
+                    : "border-surface-3 bg-surface-1 hover:bg-surface-2"
+              }`}
+              onClick={() => {
+                if (linkingFrom && linkingFrom !== node._id) {
+                  handleLinkTo(node._id);
+                } else {
+                  setSelectedNode(selectedNode === node._id ? null : node._id);
+                }
+              }}
+            >
+              <div className="flex items-start justify-between">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium text-sm text-ink-0">{node.title}</span>
+                    <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-ink-2 uppercase tracking-wide">
+                      {node.nodeType}
+                    </span>
+                    {node.linkedNodeIds.length > 0 && (
+                      <span className="text-[10px] text-ink-2">
+                        {node.linkedNodeIds.length} link{node.linkedNodeIds.length !== 1 ? "s" : ""}
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-xs text-ink-1 line-clamp-1">{node.description}</p>
+                  {node.tags.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {node.tags.slice(0, 5).map((tag) => (
+                        <span key={tag} className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-2">{tag}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-1 ml-2 shrink-0">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setLinkingFrom(node._id); }}
+                    className="rounded p-1.5 text-ink-2 hover:bg-surface-2 transition-colors"
+                    title="Link to another node"
+                  >
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-2.818a4.5 4.5 0 00-1.242-7.244l-4.5-4.5a4.5 4.5 0 00-6.364 6.364L4.28 8.57" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setEditingNode(node._id); }}
+                    className="rounded p-1.5 text-ink-2 hover:bg-surface-2 transition-colors"
+                    title="Edit node"
+                  >
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleDeleteNode(node._id); }}
+                    className="rounded p-1.5 text-ink-2 hover:bg-red-500/10 hover:text-red-500 transition-colors"
+                    title="Delete node"
+                  >
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              {/* Expanded detail view */}
+              {selectedNode === node._id && !linkingFrom && (
+                <div className="mt-3 border-t border-surface-3 pt-3">
+                  <div className="prose prose-sm max-w-none text-ink-0">
+                    <pre className="whitespace-pre-wrap text-xs bg-surface-2 rounded p-3 overflow-x-auto">{node.content}</pre>
+                  </div>
+                  {node.linkedNodeIds.length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-xs font-medium text-ink-0 mb-1.5">Linked nodes</p>
+                      <div className="space-y-1">
+                        {node.linkedNodeIds.map((linkedId) => {
+                          const linked = nodes.find((n) => n._id === linkedId);
+                          if (!linked) return null;
+                          return (
+                            <div key={linkedId} className="flex items-center justify-between rounded bg-surface-2 px-2.5 py-1.5">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setSelectedNode(linkedId); }}
+                                className="text-xs text-ink-2-interactive hover:underline"
+                              >
+                                {linked.title}
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleUnlink(node._id, linkedId); }}
+                                className="text-[10px] text-ink-2 hover:text-red-500"
+                              >
+                                unlink
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Edit node modal */}
+      {editingNode && editNode && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="card w-full max-w-xl mx-4 max-h-[90vh] overflow-y-auto">
+            <h2 className="font-semibold text-ink-0">Edit knowledge node</h2>
+            <div className="mt-4 space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="block text-xs font-medium text-ink-0">Title</label>
+                  <input type="text" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} className="input mt-1" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-ink-0">Type</label>
+                  <select value={editNodeType} onChange={(e) => setEditNodeType(e.target.value as NodeType)} className="input mt-1">
+                    {NODE_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-ink-0">Description</label>
+                <input type="text" value={editDescription} onChange={(e) => setEditDescription(e.target.value)} className="input mt-1" maxLength={200} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-ink-0">Content</label>
+                <textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} className="input mt-1 resize-y min-h-40 font-mono text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-ink-0">Tags (comma separated)</label>
+                <input type="text" value={editTags} onChange={(e) => setEditTags(e.target.value)} className="input mt-1" />
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button onClick={() => setEditingNode(null)} className="btn-secondary">Cancel</button>
+              <button onClick={handleUpdateNode} disabled={saving} className="btn-accent">
+                {saving ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }

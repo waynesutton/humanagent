@@ -335,6 +335,7 @@ export default defineSchema({
     ),
     isPublished: v.boolean(),
     isActive: v.optional(v.boolean()), // Can enable/disable skills (optional for backwards compat)
+    graphIndexNodeId: v.optional(v.id("knowledgeNodes")), // Root MOC node for this skill's knowledge graph
     updatedAt: v.number(),
   })
     .index("by_userId", ["userId"])
@@ -819,6 +820,44 @@ export default defineSchema({
     .index("by_userId_and_scope_and_agentSlug", ["userId", "scope", "agentSlug"])
     .index("by_username_and_scope", ["username", "scope"])
     .index("by_username_and_agentSlug", ["username", "agentSlug"]),
+
+  // Knowledge Graph: Traversable skill graph nodes for context routing
+  knowledgeNodes: defineTable({
+    userId: v.id("users"),
+    skillId: v.optional(v.id("skills")),
+    agentId: v.optional(v.id("agents")),
+    title: v.string(),
+    description: v.string(), // Short scannable summary (under 200 chars) for progressive disclosure
+    content: v.string(), // Full node content (markdown, may contain [[wikilinks]])
+    nodeType: v.union(
+      v.literal("concept"),
+      v.literal("technique"),
+      v.literal("reference"),
+      v.literal("moc"), // Map of Content: index node that organizes sub-topics
+      v.literal("claim"),
+      v.literal("procedure")
+    ),
+    tags: v.array(v.string()),
+    linkedNodeIds: v.array(v.id("knowledgeNodes")), // Explicit graph edges
+    embedding: v.optional(v.array(v.float64())),
+    metadata: v.optional(v.any()), // Freshness signals, owner, receipts
+    isPublished: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_skillId", ["skillId"])
+    .index("by_agentId", ["agentId"])
+    .index("by_userId_nodeType", ["userId", "nodeType"])
+    .searchIndex("search_content", {
+      searchField: "content",
+      filterFields: ["userId"],
+    })
+    .vectorIndex("by_embedding", {
+      vectorField: "embedding",
+      dimensions: 1536,
+      filterFields: ["userId"],
+    }),
 
   // Webhook retry queue for transient processing failures.
   webhookRetries: defineTable({

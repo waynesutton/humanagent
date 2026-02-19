@@ -28,6 +28,7 @@ import type * as functions_connectedApps from "../functions/connectedApps.js";
 import type * as functions_conversations from "../functions/conversations.js";
 import type * as functions_credentials from "../functions/credentials.js";
 import type * as functions_feed from "../functions/feed.js";
+import type * as functions_knowledgeGraph from "../functions/knowledgeGraph.js";
 import type * as functions_llmsTxt from "../functions/llmsTxt.js";
 import type * as functions_mcpConnections from "../functions/mcpConnections.js";
 import type * as functions_permissions from "../functions/permissions.js";
@@ -70,6 +71,7 @@ declare const fullApi: ApiFromModules<{
   "functions/conversations": typeof functions_conversations;
   "functions/credentials": typeof functions_credentials;
   "functions/feed": typeof functions_feed;
+  "functions/knowledgeGraph": typeof functions_knowledgeGraph;
   "functions/llmsTxt": typeof functions_llmsTxt;
   "functions/mcpConnections": typeof functions_mcpConnections;
   "functions/permissions": typeof functions_permissions;

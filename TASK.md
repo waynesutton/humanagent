@@ -2,7 +2,7 @@
 
 Active development tasks and roadmap items.
 
-Session updates complete on 2026-02-18. Last updated 2026-02-18.
+Session updates complete on 2026-02-19. Last updated 2026-02-19.
 
 ## In Progress
 
@@ -27,7 +27,7 @@ Session updates complete on 2026-02-18. Last updated 2026-02-18.
 - [ ] Actual image generation via DALL-E/Stability API when `generate_image` action fires (placeholder wired)
 - [ ] Actual tool execution sandbox for `call_tool` action type (placeholder wired)
 - [ ] Performance dashboard and agent metrics reports
-- [ ] Validate agent auto-task processing: confirm auto/cron agents pick up pending tasks via `processAgentTasks` and move them through board columns end to end
+- [x] Validate agent auto-task processing: confirm auto/cron agents pick up pending tasks via `processAgentTasks` and move them through board columns end to end
 - [ ] Add "Set target date" quick action on in-progress task cards when ETA is unknown
 
 ## Up Next
@@ -81,6 +81,23 @@ Session updates complete on 2026-02-18. Last updated 2026-02-18.
 
 ## Completed
 
+- [x] Fix tasks stuck in "In Progress" forever (2026-02-19)
+  - [x] Root cause: `doNow` and `createTask` mutations set task status but never triggered agent processing; tasks waited for cron that only runs for agents with active scheduling
+  - [x] `doNow` now calls `ctx.scheduler.runAfter(0, processAgentTasks)` to process immediately
+  - [x] `createTask` now schedules agent processing when an agent is assigned
+  - [x] Added 30-minute staleness guard: tasks stuck `in_progress` past threshold are force-completed by the cron with a timeout message
+  - [x] Rewrote `processAgentTasks` prompt to be more directive: bans `in_progress` re-assignment, requires completion or failure for every task, stronger examples
+- [x] Knowledge Graph / Skill Graphs (2026-02-19)
+  - [x] Added `knowledgeNodes` table to schema with full text search, vector search, and graph edge support
+  - [x] Added `graphIndexNodeId` field to skills table for root MOC node linking
+  - [x] Created `convex/functions/knowledgeGraph.ts` with CRUD, bidirectional linking, graph traversal, stats, and internal agent runtime mutations
+  - [x] Integrated knowledge graph traversal into agent runtime `processMessage` pipeline (step 4b between semantic memory and message array build)
+  - [x] Added `create_knowledge_node` and `link_knowledge_nodes` action types to agent runtime parser and executor
+  - [x] Updated system prompt with knowledge graph action formats and instructions
+  - [x] Built Knowledge Graph section in `SkillFilePage` with create, view, edit, delete, link, and unlink UI
+  - [x] Wired knowledge graph APIs to `src/lib/platformApi.ts`
+  - [x] PRD at `prds/skill-graphs.md`
+  - [x] Verified integration: all 7 integration points pass (runtime pipeline ordering, action type/parser/executor, system prompt, schema indexes, platform API, SkillFilePage component, internal function references)
 - [x] Workflow pipeline visualization and datetime awareness (2026-02-18)
   - [x] Added `workflowSteps` optional array field to tasks table schema with label, status, startedAt, completedAt, durationMs, detail
   - [x] Instrumented `convex/agent/runtime.ts` `processMessage` to collect 7 pipeline phases (Security scan, Config load, Context build, LLM call, Parse response, Execute actions, Save memory) with timing, written once at end via `setWorkflowSteps`

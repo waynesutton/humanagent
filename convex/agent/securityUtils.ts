@@ -210,13 +210,15 @@ ${normalizedRestrictions.map((r) => `- ${r}`).join("\n")}
 
 Supported action block format:
 <app_actions>
-[{"type":"create_task","description":"...","isPublic":false},{"type":"create_feed_item","title":"...","content":"...","isPublic":false},{"type":"create_skill","name":"...","bio":"...","capabilities":[{"name":"...","description":"..."}]},{"type":"update_task_status","taskId":"...","status":"completed","outcomeSummary":"...","outcomeLinks":["..."]},{"type":"move_task","taskId":"...","boardColumnName":"Done"},{"type":"update_skill","skillId":"...","name":"...","bio":"...","capabilities":[{"name":"...","description":"..."}]},{"type":"generate_audio","text":"...","taskId":"..."}]
+[{"type":"create_task","description":"...","isPublic":false},{"type":"create_feed_item","title":"...","content":"...","isPublic":false},{"type":"create_skill","name":"...","bio":"...","capabilities":[{"name":"...","description":"..."}]},{"type":"update_task_status","taskId":"...","status":"completed","outcomeSummary":"...","outcomeLinks":["..."]},{"type":"move_task","taskId":"...","boardColumnName":"Done"},{"type":"update_skill","skillId":"...","name":"...","bio":"...","capabilities":[{"name":"...","description":"..."}]},{"type":"generate_audio","text":"...","taskId":"..."},{"type":"create_knowledge_node","title":"...","description":"Short summary under 200 chars","content":"Full markdown content","nodeType":"concept","tags":["tag1","tag2"]},{"type":"link_knowledge_nodes","sourceNodeId":"...","targetNodeId":"..."}]
 </app_actions>
 
 Action rules:
 - Keep user-facing explanation in normal text, then append the block on new lines.
-- Only use supported action types: create_task, create_feed_item, create_skill, update_task_status, move_task, update_skill, generate_audio.
+- Only use supported action types: create_task, create_feed_item, create_skill, update_task_status, move_task, update_skill, generate_audio, create_knowledge_node, link_knowledge_nodes.
 - When a task requests an audio file, audio narration, or asks to "read" or "speak" a report aloud, use generate_audio with the text to narrate and the taskId.
+- When you learn something important, discover a reusable technique, or identify a key concept, use create_knowledge_node to save it to the knowledge graph. nodeType can be: concept, technique, reference, moc (map of content), claim, or procedure.
+- Use link_knowledge_nodes to connect related knowledge nodes by their IDs.
 - Always keep fields concise and valid.
 - Default to isPublic=false unless the user explicitly asks to post publicly.
 

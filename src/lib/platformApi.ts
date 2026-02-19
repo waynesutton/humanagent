@@ -246,6 +246,17 @@ export const platformApi = {
     thinking: {
       getAgentThoughts: api.functions.agentThinking.getAgentThoughts,
     },
+    knowledgeGraph: {
+      listNodes: api.functions.knowledgeGraph.listNodes,
+      getNode: api.functions.knowledgeGraph.getNode,
+      getLinkedNodes: api.functions.knowledgeGraph.getLinkedNodes,
+      getGraphStats: api.functions.knowledgeGraph.getGraphStats,
+      createNode: api.functions.knowledgeGraph.createNode,
+      updateNode: api.functions.knowledgeGraph.updateNode,
+      deleteNode: api.functions.knowledgeGraph.deleteNode,
+      linkNodes: api.functions.knowledgeGraph.linkNodes,
+      unlinkNodes: api.functions.knowledgeGraph.unlinkNodes,
+    },
     users: {
       getByUsername: api.functions.users.getByUsername,
     },
