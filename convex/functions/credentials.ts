@@ -32,6 +32,13 @@ const serviceValidator = v.union(
   // Browser automation (BYOK)
   v.literal("firecrawl"),
   v.literal("browserbase"),
+  v.literal("browser_use"), // Browser Use Cloud API
+  // Memory services
+  v.literal("supermemory"), // Supermemory API
+  // Tool execution services
+  v.literal("composio"), // Composio API for 10,000+ SaaS tool integrations
+  // Code execution services
+  v.literal("daytona"), // Daytona API for secure code execution sandboxes
   v.literal("custom")
 );
 
@@ -207,9 +214,42 @@ export const getLLMProviderStatus = authedQuery({
       };
     }
 
-    // Browser automation services (Firecrawl, Browserbase for Stagehand/BrowserUse)
-    const browserServices = ["firecrawl", "browserbase"] as const;
+    // Browser automation services (Firecrawl, Browserbase for Stagehand, Browser Use Cloud)
+    const browserServices = ["firecrawl", "browserbase", "browser_use"] as const;
     for (const service of browserServices) {
+      const cred = creds.find((c) => c.service === service);
+      status[service] = {
+        configured: !!cred?.encryptedApiKey,
+        isActive: cred?.isActive ?? false,
+        lastUsedAt: cred?.lastUsedAt,
+      };
+    }
+
+    // Memory services (Supermemory)
+    const memoryServices = ["supermemory"] as const;
+    for (const service of memoryServices) {
+      const cred = creds.find((c) => c.service === service);
+      status[service] = {
+        configured: !!cred?.encryptedApiKey,
+        isActive: cred?.isActive ?? false,
+        lastUsedAt: cred?.lastUsedAt,
+      };
+    }
+
+    // Tool execution services (Composio)
+    const toolExecutionServices = ["composio"] as const;
+    for (const service of toolExecutionServices) {
+      const cred = creds.find((c) => c.service === service);
+      status[service] = {
+        configured: !!cred?.encryptedApiKey,
+        isActive: cred?.isActive ?? false,
+        lastUsedAt: cred?.lastUsedAt,
+      };
+    }
+
+    // Code execution services (Daytona)
+    const codeExecutionServices = ["daytona"] as const;
+    for (const service of codeExecutionServices) {
       const cred = creds.find((c) => c.service === service);
       status[service] = {
         configured: !!cred?.encryptedApiKey,
@@ -230,6 +270,74 @@ export const getLLMProviderStatus = authedQuery({
     }
 
     return status;
+  },
+});
+
+// Get provider health status for all LLM providers (circuit breaker visibility)
+export const getProviderHealth = authedQuery({
+  args: {},
+  handler: async (ctx) => {
+    const healthRecords = await ctx.db
+      .query("llmProviderHealth")
+      .withIndex("by_userId", (q) => q.eq("userId", ctx.userId))
+      .collect();
+
+    const healthByProvider: Record<
+      string,
+      {
+        consecutiveFailures: number;
+        breakerOpen: boolean;
+        breakerOpenUntil?: number;
+        lastAttemptAt?: number;
+        lastSuccessAt?: number;
+        lastErrorAt?: number;
+        lastErrorCategory?: string;
+        lastErrorMessage?: string;
+        totalAttempts: number;
+        totalFailures: number;
+      }
+    > = {};
+
+    for (const record of healthRecords) {
+      healthByProvider[record.provider] = {
+        consecutiveFailures: record.consecutiveFailures,
+        breakerOpen: record.breakerOpen,
+        breakerOpenUntil: record.breakerOpenUntil,
+        lastAttemptAt: record.lastAttemptAt,
+        lastSuccessAt: record.lastSuccessAt,
+        lastErrorAt: record.lastErrorAt,
+        lastErrorCategory: record.lastErrorCategory,
+        lastErrorMessage: record.lastErrorMessage,
+        totalAttempts: record.totalAttempts,
+        totalFailures: record.totalFailures,
+      };
+    }
+
+    return healthByProvider;
+  },
+});
+
+// Reset circuit breaker for a specific provider (user action)
+export const resetProviderHealth = authedMutation({
+  args: { provider: providerValidator },
+  handler: async (ctx, { provider }) => {
+    if (provider === "custom") return;
+
+    const existing = await ctx.db
+      .query("llmProviderHealth")
+      .withIndex("by_userId_provider", (q) =>
+        q.eq("userId", ctx.userId).eq("provider", provider)
+      )
+      .unique();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        consecutiveFailures: 0,
+        breakerOpen: false,
+        breakerOpenUntil: undefined,
+        updatedAt: Date.now(),
+      });
+    }
   },
 });
 

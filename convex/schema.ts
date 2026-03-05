@@ -181,6 +181,16 @@ export default defineSchema({
         browserUseEnabled: v.boolean(), // Browser Use for task automation
       })
     ),
+    // Supermemory configuration for personalized context
+    supermemoryConfig: v.optional(
+      v.object({
+        enabled: v.boolean(), // Whether Supermemory integration is active
+        containerTag: v.string(), // Container tag for this agent (e.g., "agent_{agentId}")
+        syncConversations: v.boolean(), // Auto-ingest conversations to Supermemory
+        syncTaskResults: v.boolean(), // Auto-ingest task outcomes to Supermemory
+        lastProfileFetchAt: v.optional(v.number()), // When profile was last fetched
+      })
+    ),
     // X/Twitter integration (via xAI API or direct X API)
     xConfig: v.optional(
       v.object({
@@ -273,6 +283,13 @@ export default defineSchema({
       // Browser automation (BYOK)
       v.literal("firecrawl"),
       v.literal("browserbase"),
+      v.literal("browser_use"), // Browser Use Cloud API for stateful browser automation
+      // Memory services
+      v.literal("supermemory"), // Supermemory API for user profiles
+      // Tool execution services
+      v.literal("composio"), // Composio API for 10,000+ SaaS tool integrations
+      // Code execution services
+      v.literal("daytona"), // Daytona API for secure code execution sandboxes
       v.literal("custom")
     ),
     // Encrypted API key (never stored in plaintext)
@@ -880,4 +897,155 @@ export default defineSchema({
       "status",
       "nextAttemptAt",
     ]),
+
+  // Automation control plane definitions: unified trigger + action contracts.
+  automationDefinitions: defineTable({
+    userId: v.id("users"),
+    name: v.string(),
+    description: v.optional(v.string()),
+    triggerType: v.union(
+      v.literal("manual"),
+      v.literal("interval"),
+      v.literal("event")
+    ),
+    // Interval trigger config
+    intervalMinutes: v.optional(v.number()),
+    nextRunAt: v.optional(v.number()),
+    // Event trigger config
+    eventType: v.optional(v.string()),
+    // Action adapter to execute existing primitives
+    actionType: v.union(v.literal("process_agent_tasks")),
+    actionConfig: v.optional(v.any()),
+    isActive: v.boolean(),
+    lastRunAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_and_isActive", ["userId", "isActive"])
+    .index("by_isActive_and_nextRunAt", ["isActive", "nextRunAt"])
+    .index("by_userId_and_triggerType_and_eventType", [
+      "userId",
+      "triggerType",
+      "eventType",
+    ]),
+
+  // Automation run history for observability and debugging.
+  automationRuns: defineTable({
+    userId: v.id("users"),
+    automationId: v.id("automationDefinitions"),
+    triggerSource: v.union(
+      v.literal("manual"),
+      v.literal("interval"),
+      v.literal("event")
+    ),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("succeeded"),
+      v.literal("failed")
+    ),
+    input: v.optional(v.any()),
+    output: v.optional(v.any()),
+    error: v.optional(v.string()),
+    startedAt: v.optional(v.number()),
+    endedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_automationId", ["automationId"])
+    .index("by_userId_and_createdAt", ["userId", "createdAt"]),
+
+  // Browser Use profiles: persistent login state for browser automation
+  browserProfiles: defineTable({
+    userId: v.id("users"),
+    agentId: v.optional(v.id("agents")), // Can scope to specific agent
+    browserUseProfileId: v.string(), // Browser Use Cloud profile ID
+    name: v.string(), // Human-readable name (e.g., "work-slack", "personal-twitter")
+    description: v.optional(v.string()),
+    services: v.array(v.string()), // Sites this profile is logged into (e.g., ["slack.com", "github.com"])
+    lastSyncedAt: v.optional(v.number()), // When profile was last synced from local browser
+    isActive: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_agentId", ["agentId"])
+    .index("by_browserUseProfileId", ["browserUseProfileId"]),
+
+  // Browser Use sessions: active automation runs
+  browserSessions: defineTable({
+    userId: v.id("users"),
+    agentId: v.id("agents"),
+    taskId: v.optional(v.id("tasks")), // Associated task if any
+    browserUseSessionId: v.string(), // Browser Use Cloud session ID
+    browserUseProfileId: v.optional(v.string()), // Which profile is being used
+    liveUrl: v.optional(v.string()), // Real-time monitoring URL
+    shareUrl: v.optional(v.string()), // Public shareable link
+    status: v.union(
+      v.literal("running"),
+      v.literal("paused"),
+      v.literal("completed"),
+      v.literal("failed")
+    ),
+    proxyCountry: v.optional(v.string()), // "us", "uk", etc.
+    startedAt: v.number(),
+    endedAt: v.optional(v.number()),
+    lastActionAt: v.optional(v.number()), // When last browser action occurred
+    actionCount: v.optional(v.number()), // Number of actions taken
+  })
+    .index("by_userId", ["userId"])
+    .index("by_agentId", ["agentId"])
+    .index("by_taskId", ["taskId"])
+    .index("by_browserUseSessionId", ["browserUseSessionId"])
+    .index("by_status", ["status"]),
+
+  // Supermemory profiles: cached user profiles for faster access
+  supermemoryProfiles: defineTable({
+    userId: v.id("users"),
+    agentId: v.optional(v.id("agents")), // Optional: per-agent profile
+    containerTag: v.string(), // Supermemory container tag
+    staticFacts: v.array(v.string()), // Long-term facts about the user
+    dynamicContext: v.array(v.string()), // Recent context and activity
+    searchQuery: v.optional(v.string()), // If profile was fetched with a search query
+    fetchedAt: v.number(), // When this profile was fetched
+    expiresAt: v.number(), // When to refresh (typically 5-15 minutes)
+  })
+    .index("by_userId", ["userId"])
+    .index("by_agentId", ["agentId"])
+    .index("by_containerTag", ["containerTag"])
+    .index("by_expiresAt", ["expiresAt"]),
+
+  // LLM Provider Health: Circuit breaker state and failure tracking for failover
+  llmProviderHealth: defineTable({
+    userId: v.id("users"),
+    provider: llmProviderValidator,
+    // Circuit breaker state
+    consecutiveFailures: v.number(),
+    breakerOpen: v.boolean(),
+    breakerOpenUntil: v.optional(v.number()), // Timestamp when breaker auto-closes
+    // Last attempt details
+    lastAttemptAt: v.optional(v.number()),
+    lastSuccessAt: v.optional(v.number()),
+    lastErrorAt: v.optional(v.number()),
+    lastErrorCategory: v.optional(
+      v.union(
+        v.literal("invalid_key"),
+        v.literal("rate_limit"),
+        v.literal("timeout"),
+        v.literal("server_error"),
+        v.literal("bad_request"),
+        v.literal("network_error")
+      )
+    ),
+    lastErrorMessage: v.optional(v.string()),
+    lastHttpStatus: v.optional(v.number()),
+    // Aggregate stats for observability
+    totalAttempts: v.number(),
+    totalFailures: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_provider", ["userId", "provider"]),
 });

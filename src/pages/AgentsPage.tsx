@@ -195,6 +195,11 @@ export function AgentsPage() {
   const [editFirecrawlEnabled, setEditFirecrawlEnabled] = useState(false);
   const [editStagehandEnabled, setEditStagehandEnabled] = useState(false);
   const [editBrowserUseEnabled, setEditBrowserUseEnabled] = useState(false);
+  // Supermemory integration
+  const [editSupermemoryEnabled, setEditSupermemoryEnabled] = useState(false);
+  const [editSupermemoryContainerTag, setEditSupermemoryContainerTag] = useState("");
+  const [editSupermemorySyncConversations, setEditSupermemorySyncConversations] = useState(true);
+  const [editSupermemorySyncTasks, setEditSupermemorySyncTasks] = useState(true);
   // X/Twitter integration
   const [editXEnabled, setEditXEnabled] = useState(false);
   const [editXMode, setEditXMode] = useState<"xai_grok" | "x_api">("xai_grok");
@@ -276,6 +281,8 @@ export function AgentsPage() {
   const hasElevenLabsKey = credentials?.elevenlabs?.configured ?? false;
   const hasFirecrawlKey = credentials?.firecrawl?.configured ?? false;
   const hasBrowserbaseKey = credentials?.browserbase?.configured ?? false;
+  const hasBrowserUseKey = credentials?.browser_use?.configured ?? false;
+  const hasSupermemoryKey = credentials?.supermemory?.configured ?? false;
   const hasXaiKey = credentials?.xai?.configured ?? false;
   const hasTwitterKey = credentials?.twitter?.configured ?? false;
   const hasPhoneProviderKey = hasTwilioKey || hasTelnyxKey || hasPlivoKey || hasVapiKey;
@@ -446,6 +453,12 @@ export function AgentsPage() {
     setEditFirecrawlEnabled(browserAutomation?.firecrawlEnabled ?? false);
     setEditStagehandEnabled(browserAutomation?.stagehandEnabled ?? false);
     setEditBrowserUseEnabled(browserAutomation?.browserUseEnabled ?? false);
+    // Supermemory config
+    const supermemoryConfig = (agent as { supermemoryConfig?: { enabled?: boolean; containerTag?: string; syncConversations?: boolean; syncTaskResults?: boolean } }).supermemoryConfig;
+    setEditSupermemoryEnabled(supermemoryConfig?.enabled ?? false);
+    setEditSupermemoryContainerTag(supermemoryConfig?.containerTag || `agent_${agent._id}`);
+    setEditSupermemorySyncConversations(supermemoryConfig?.syncConversations ?? true);
+    setEditSupermemorySyncTasks(supermemoryConfig?.syncTaskResults ?? true);
     // X/Twitter config
     const xConfig = (agent as { xConfig?: { enabled?: boolean; mode?: string; accountType?: string; xUsername?: string; capabilities?: { canPost?: boolean; canReply?: boolean; canSearch?: boolean; canAnalyze?: boolean; canMonitor?: boolean }; autoPost?: { enabled?: boolean; requireApproval?: boolean } } }).xConfig;
     setEditXEnabled(xConfig?.enabled ?? false);
@@ -532,6 +545,13 @@ export function AgentsPage() {
           firecrawlEnabled: editFirecrawlEnabled,
           stagehandEnabled: editStagehandEnabled,
           browserUseEnabled: editBrowserUseEnabled,
+        },
+        // Supermemory settings
+        supermemoryConfig: {
+          enabled: editSupermemoryEnabled,
+          containerTag: editSupermemoryContainerTag.trim() || `agent_${editingAgent}`,
+          syncConversations: editSupermemorySyncConversations,
+          syncTaskResults: editSupermemorySyncTasks,
         },
         // X/Twitter integration settings
         xConfig: {
@@ -1491,16 +1511,77 @@ export function AgentsPage() {
                               type="checkbox"
                               checked={editBrowserUseEnabled}
                               onChange={(e) => setEditBrowserUseEnabled(e.target.checked)}
-                              disabled={!hasBrowserbaseKey}
+                              disabled={!hasBrowserbaseKey && !hasBrowserUseKey}
                               className="h-4 w-4 rounded border-surface-3 text-accent focus:ring-accent disabled:opacity-50"
                             />
-                            <span className={`text-sm ${hasBrowserbaseKey ? "text-ink-0" : "text-ink-2"}`}>
+                            <span className={`text-sm ${hasBrowserbaseKey || hasBrowserUseKey ? "text-ink-0" : "text-ink-2"}`}>
                               Browser Use (task automation)
                             </span>
-                            {!hasBrowserbaseKey && (
-                              <span className="text-xs text-amber-500">Configure Browserbase in Settings</span>
+                            {!hasBrowserbaseKey && !hasBrowserUseKey && (
+                              <span className="text-xs text-amber-500">Configure Browser Use in Settings</span>
                             )}
                           </label>
+                        </div>
+                      </div>
+
+                      {/* Supermemory Integration */}
+                      <div className="mt-4 rounded-lg border border-surface-3 bg-surface-1 p-4">
+                        <h4 className="text-sm font-medium text-ink-0">Supermemory Integration</h4>
+                        <p className="text-xs text-ink-2 mt-1">
+                          Automatically build user profiles from conversations and task outcomes.
+                        </p>
+                        <div className="mt-3 space-y-3">
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={editSupermemoryEnabled}
+                              onChange={(e) => setEditSupermemoryEnabled(e.target.checked)}
+                              disabled={!hasSupermemoryKey}
+                              className="h-4 w-4 rounded border-surface-3 text-accent focus:ring-accent disabled:opacity-50"
+                            />
+                            <span className={`text-sm ${hasSupermemoryKey ? "text-ink-0" : "text-ink-2"}`}>
+                              Enable Supermemory
+                            </span>
+                            {!hasSupermemoryKey && (
+                              <span className="text-xs text-amber-500">Configure Supermemory in Settings</span>
+                            )}
+                          </label>
+
+                          {editSupermemoryEnabled && (
+                            <div className="space-y-3">
+                              <div>
+                                <label className="block text-sm text-ink-1">Container Tag</label>
+                                <input
+                                  type="text"
+                                  value={editSupermemoryContainerTag}
+                                  onChange={(e) => setEditSupermemoryContainerTag(e.target.value)}
+                                  placeholder={`agent_${editingAgent}`}
+                                  className="input mt-1"
+                                />
+                                <p className="text-xs text-ink-2 mt-1">
+                                  Unique identifier for this agent's memory container.
+                                </p>
+                              </div>
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={editSupermemorySyncConversations}
+                                  onChange={(e) => setEditSupermemorySyncConversations(e.target.checked)}
+                                  className="h-4 w-4 rounded border-surface-3 text-accent focus:ring-accent"
+                                />
+                                <span className="text-sm text-ink-0">Sync conversations</span>
+                              </label>
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={editSupermemorySyncTasks}
+                                  onChange={(e) => setEditSupermemorySyncTasks(e.target.checked)}
+                                  className="h-4 w-4 rounded border-surface-3 text-accent focus:ring-accent"
+                                />
+                                <span className="text-sm text-ink-0">Sync task outcomes</span>
+                              </label>
+                            </div>
+                          )}
                         </div>
                       </div>
 

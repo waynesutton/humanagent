@@ -389,6 +389,23 @@ async function callMistral(
 }
 
 /**
+ * Call xAI (Grok) API via OpenAI-compatible endpoint
+ */
+async function callXAI(
+  apiKey: string,
+  model: string,
+  messages: ChatMessage[],
+  baseUrl?: string
+): Promise<{ content: string; tokensUsed: number }> {
+  return callOpenAI(
+    apiKey,
+    model,
+    messages,
+    baseUrl ?? "https://api.x.ai/v1"
+  );
+}
+
+/**
  * Shared LLM call router used by processMessage and auto-generate features.
  * Picks the right provider call function based on config.
  */
@@ -416,9 +433,168 @@ async function callLLMProvider(
       return callMiniMax(apiKey, model, messages, baseUrl);
     case "kimi":
       return callKimi(apiKey, model, messages, baseUrl);
+    case "xai":
+      return callXAI(apiKey, model, messages, baseUrl);
     default:
       return callOpenAI(apiKey, model, messages, baseUrl);
   }
+}
+
+// Failover configuration
+const FAILOVER_MAX_RETRIES = 1; // Retry once per provider before failover
+const FAILOVER_RETRY_DELAY_MS = 500; // 500ms between retries
+
+// LLM candidate for failover
+interface LLMCandidate {
+  provider: string;
+  apiKey: string;
+  baseUrl?: string;
+  model: string;
+  source: "db" | "env";
+}
+
+// Error category classification
+type ErrorCategory =
+  | "invalid_key"
+  | "rate_limit"
+  | "timeout"
+  | "server_error"
+  | "bad_request"
+  | "network_error";
+
+// Classify an error for failover decisions
+function classifyLLMError(
+  status: number | undefined,
+  errorText: string
+): ErrorCategory {
+  const lowerError = errorText.toLowerCase();
+
+  if (status === 401 || status === 403) return "invalid_key";
+  if (lowerError.includes("invalid api key") || lowerError.includes("unauthorized")) {
+    return "invalid_key";
+  }
+
+  if (status === 429) return "rate_limit";
+  if (lowerError.includes("rate limit") || lowerError.includes("too many requests")) {
+    return "rate_limit";
+  }
+
+  if (lowerError.includes("timeout") || lowerError.includes("timed out") || lowerError.includes("aborted")) {
+    return "timeout";
+  }
+
+  if (status && status >= 500 && status < 600) return "server_error";
+  if (lowerError.includes("internal server error") || lowerError.includes("service unavailable")) {
+    return "server_error";
+  }
+
+  if (
+    lowerError.includes("network") ||
+    lowerError.includes("fetch failed") ||
+    lowerError.includes("econnrefused") ||
+    lowerError.includes("enotfound")
+  ) {
+    return "network_error";
+  }
+
+  if (status && status >= 400 && status < 500) return "bad_request";
+
+  return "bad_request";
+}
+
+// Check if error should trigger failover
+function isRetryableCategory(category: ErrorCategory): boolean {
+  return category !== "bad_request";
+}
+
+// Sleep helper for retry delays
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Execute LLM call with failover across multiple provider candidates.
+ * Returns structured result with provider info for health tracking.
+ */
+async function executeWithFailover(
+  candidates: LLMCandidate[],
+  messages: ChatMessage[],
+  onSuccess?: (provider: string) => Promise<void>,
+  onFailure?: (provider: string, category: ErrorCategory, message: string, status?: number) => Promise<void>
+): Promise<{ content: string; tokensUsed: number; provider: string; model: string }> {
+  if (candidates.length === 0) {
+    throw new Error("No LLM provider candidates available. Please add an API key in Settings.");
+  }
+
+  const errors: Array<{ provider: string; error: string; category: ErrorCategory }> = [];
+
+  for (const candidate of candidates) {
+    let lastError = "";
+    let lastCategory: ErrorCategory = "bad_request";
+    let lastStatus: number | undefined;
+
+    // Retry loop for this provider
+    for (let attempt = 0; attempt <= FAILOVER_MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        await sleep(FAILOVER_RETRY_DELAY_MS * attempt); // Exponential backoff
+      }
+
+      try {
+        const result = await callLLMProvider(
+          candidate.provider,
+          candidate.apiKey,
+          candidate.model,
+          messages,
+          candidate.baseUrl
+        );
+
+        // Success: record and return
+        if (onSuccess) {
+          await onSuccess(candidate.provider).catch(() => {});
+        }
+
+        return {
+          content: result.content,
+          tokensUsed: result.tokensUsed,
+          provider: candidate.provider,
+          model: candidate.model,
+        };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+
+        // Try to extract HTTP status from error message
+        const statusMatch = errorMessage.match(/(\d{3})/);
+        lastStatus = statusMatch?.[1] ? parseInt(statusMatch[1], 10) : undefined;
+        lastCategory = classifyLLMError(lastStatus, errorMessage);
+        lastError = errorMessage;
+
+        // For non-retryable errors, don't retry on this provider
+        if (!isRetryableCategory(lastCategory)) {
+          break;
+        }
+      }
+    }
+
+    // Record failure for this provider
+    errors.push({
+      provider: candidate.provider,
+      error: lastError,
+      category: lastCategory,
+    });
+
+    if (onFailure) {
+      await onFailure(candidate.provider, lastCategory, lastError, lastStatus).catch(() => {});
+    }
+
+    // For bad_request, don't failover (likely input problem, not provider problem)
+    if (lastCategory === "bad_request") {
+      throw new Error(`${candidate.provider} error: ${lastError}`);
+    }
+  }
+
+  // All candidates failed
+  const providerList = errors.map((e) => `${e.provider} (${e.category})`).join(", ");
+  throw new Error(`All LLM providers failed: ${providerList}. Last error: ${errors[errors.length - 1]?.error}`);
 }
 
 // Define the return type for processMessage
@@ -502,6 +678,23 @@ type CallToolAction = {
   type: "call_tool";
   toolName: string;
   input?: Record<string, unknown>;
+  parameters?: Record<string, unknown>;
+};
+
+type ExecuteCodeAction = {
+  type: "execute_code";
+  language: string;
+  code: string;
+  timeout?: number;
+  taskId?: string;
+};
+
+type ExecuteCommandAction = {
+  type: "execute_command";
+  command: string;
+  workdir?: string;
+  timeout?: number;
+  taskId?: string;
 };
 
 type CreateKnowledgeNodeAction = {
@@ -519,6 +712,20 @@ type LinkKnowledgeNodesAction = {
   targetNodeId: string;
 };
 
+type BrowserNavigateAction = {
+  type: "browser_navigate";
+  url: string;
+  profileId?: string;
+  taskId?: string;
+};
+
+type BrowserActionAction = {
+  type: "browser_action";
+  sessionId: string;
+  task: string;
+  maxSteps?: number;
+};
+
 type AgentRuntimeAction =
   | CreateTaskAction
   | CreateFeedItemAction
@@ -531,8 +738,12 @@ type AgentRuntimeAction =
   | GenerateImageAction
   | GenerateAudioAction
   | CallToolAction
+  | ExecuteCodeAction
+  | ExecuteCommandAction
   | CreateKnowledgeNodeAction
-  | LinkKnowledgeNodesAction;
+  | LinkKnowledgeNodesAction
+  | BrowserNavigateAction
+  | BrowserActionAction;
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -800,6 +1011,28 @@ function parseAgentActions(rawResponse: string): {
           sourceNodeId,
           targetNodeId,
         });
+      } else if (type === "browser_navigate") {
+        const url = typeof candidate.url === "string" ? candidate.url.trim() : "";
+        if (!url) continue;
+        const profileId = typeof candidate.profileId === "string" ? candidate.profileId.trim() : undefined;
+        const taskId = typeof candidate.taskId === "string" ? candidate.taskId.trim() : undefined;
+        actions.push({
+          type: "browser_navigate",
+          url,
+          profileId,
+          taskId,
+        });
+      } else if (type === "browser_action") {
+        const sessionId = typeof candidate.sessionId === "string" ? candidate.sessionId.trim() : "";
+        const task = typeof candidate.task === "string" ? candidate.task.trim() : "";
+        if (!sessionId || !task) continue;
+        const maxSteps = typeof candidate.maxSteps === "number" ? candidate.maxSteps : undefined;
+        actions.push({
+          type: "browser_action",
+          sessionId,
+          task,
+          maxSteps,
+        });
       }
     }
 
@@ -1023,16 +1256,17 @@ export const processMessage = internalAction({
       };
     }
 
-    // 3. Get API credentials for the configured provider
-    const credentials = await ctx.runQuery(
-      internal.agent.queries.getProviderCredentials,
+    // 3. Get LLM candidates with failover support
+    const candidates: LLMCandidate[] = await ctx.runQuery(
+      internal.agent.failover.resolveLLMCandidates,
       {
         userId: args.userId,
-        provider: config.provider,
+        preferredProvider: config.provider,
+        preferredModel: config.model,
       }
     );
 
-    if (!credentials) {
+    if (candidates.length === 0) {
       wfRecord("Config load", step2Start, "failed", "No API key for " + config.provider);
       return {
         response: `No API key configured for ${config.provider}. Please add your API key in Settings.`,
@@ -1041,7 +1275,7 @@ export const processMessage = internalAction({
         securityFlags: [],
       };
     }
-    wfRecord("Config load", step2Start, "completed", config.provider + "/" + config.model);
+    wfRecord("Config load", step2Start, "completed", config.provider + "/" + config.model + ` (${candidates.length} candidates)`);
 
     // 4. Load conversation context
     const step4Start = Date.now();
@@ -1130,39 +1364,94 @@ export const processMessage = internalAction({
       console.warn("Knowledge graph traversal failed:", knowledgeError);
     }
 
-    wfRecord("Context build", step4Start, "completed", `${contextMessages.length} messages, ${semanticMessages.length} memories${knowledgeContext ? ", knowledge graph active" : ""}`);
+    // 4c. Load Supermemory profile for personalized context
+    let supermemoryContext = "";
+    try {
+      // Check if agent has Supermemory enabled
+      const agentConfig = args.agentId
+        ? await ctx.runQuery(internal.functions.supermemoryQueries.getAgentForProfile, {
+            agentId: args.agentId,
+          })
+        : null;
+
+      if (agentConfig?.supermemoryConfig?.enabled) {
+        // Try cached profile first
+        const cachedProfile = await ctx.runQuery(
+          internal.functions.supermemoryQueries.getCachedProfileInternal,
+          {
+            userId: args.userId,
+            agentId: args.agentId,
+          }
+        );
+
+        if (cachedProfile) {
+          const staticSection = cachedProfile.staticFacts.length > 0
+            ? `User facts:\n${cachedProfile.staticFacts.map((f: string) => `- ${f}`).join("\n")}`
+            : "";
+          const dynamicSection = cachedProfile.dynamicContext.length > 0
+            ? `Recent context:\n${cachedProfile.dynamicContext.map((c: string) => `- ${c}`).join("\n")}`
+            : "";
+
+          if (staticSection || dynamicSection) {
+            supermemoryContext = `\n\n## User Profile\n${staticSection}\n\n${dynamicSection}`.trim();
+          }
+        }
+      }
+    } catch (supermemoryError) {
+      console.warn("Supermemory profile load failed:", supermemoryError);
+    }
+
+    wfRecord("Context build", step4Start, "completed", `${contextMessages.length} messages, ${semanticMessages.length} memories${knowledgeContext ? ", knowledge graph" : ""}${supermemoryContext ? ", supermemory" : ""}`);
 
     // 5. Build full message array
-    const systemPromptWithKnowledge = knowledgeContext
-      ? config.systemPrompt + knowledgeContext
-      : config.systemPrompt;
+    const systemPromptWithContext = [
+      config.systemPrompt,
+      knowledgeContext,
+      supermemoryContext,
+    ]
+      .filter(Boolean)
+      .join("\n");
 
     const messages: ChatMessage[] = [
-      { role: "system", content: systemPromptWithKnowledge },
+      { role: "system", content: systemPromptWithContext },
       ...contextMessages,
       ...semanticMessages,
       { role: "user", content: securityResult.sanitizedInput },
     ];
 
-    // 6. Call the appropriate LLM provider
+    // 6. Call LLM with failover across provider candidates
     const step6Start = Date.now();
-    let result: { content: string; tokensUsed: number };
+    let result: { content: string; tokensUsed: number; provider: string; model: string };
 
     try {
-      result = await callLLMProvider(
-        config.provider,
-        credentials.apiKey,
-        config.model,
+      result = await executeWithFailover(
+        candidates,
         messages,
-        credentials.baseUrl
+        // On success: record to health tracker
+        async (provider) => {
+          await ctx.runMutation(internal.agent.failover.recordSuccess, {
+            userId: args.userId,
+            provider,
+          });
+        },
+        // On failure: record to health tracker for circuit breaker
+        async (provider, category, message, status) => {
+          await ctx.runMutation(internal.agent.failover.recordFailure, {
+            userId: args.userId,
+            provider,
+            errorCategory: category,
+            errorMessage: message,
+            httpStatus: status,
+          });
+        }
       );
     } catch (error) {
-      console.error("LLM call failed:", error);
+      console.error("LLM call failed (all providers):", error);
       const errorMessage = getErrorMessage(error);
       const configDiagnostic = buildConfigDiagnosticResponse({
         provider: config.provider,
         model: config.model,
-        baseUrl: credentials.baseUrl,
+        baseUrl: candidates[0]?.baseUrl,
         errorMessage,
       });
       wfRecord("LLM call", step6Start, "failed", errorMessage.slice(0, 200));
@@ -1178,7 +1467,7 @@ export const processMessage = internalAction({
             : [],
       };
     }
-    wfRecord("LLM call", step6Start, "completed", `${result.tokensUsed} tokens`);
+    wfRecord("LLM call", step6Start, "completed", `${result.tokensUsed} tokens via ${result.provider}`);
 
     // 7. Parse response, extract thinking, execute actions
     const step7Start = Date.now();
@@ -1345,8 +1634,61 @@ export const processMessage = internalAction({
             console.warn("Audio generation failed:", audioError);
           }
         } else if (action.type === "call_tool") {
-          // Placeholder: tool execution requires skill-declared tool registry
-          console.log(`call_tool requested: toolName="${action.toolName}"`);
+          try {
+            const toolResult = await ctx.runAction(
+              internal.functions.composio.executeToolFromAgent,
+              {
+                userId: args.userId,
+                agentId: args.agentId,
+                toolName: action.toolName,
+                parameters: action.parameters ?? action.input,
+                taskId: undefined,
+              }
+            );
+            if (!toolResult.success) {
+              console.warn(`call_tool failed for "${action.toolName}": ${toolResult.error}`);
+            }
+          } catch (toolError) {
+            console.warn("call_tool action failed:", toolError);
+          }
+        } else if (action.type === "execute_code") {
+          try {
+            const codeResult = await ctx.runAction(
+              internal.functions.daytona.executeCodeFromAgent,
+              {
+                userId: args.userId,
+                agentId: args.agentId,
+                language: action.language,
+                code: action.code,
+                timeout: action.timeout,
+                taskId: action.taskId ? (action.taskId as Id<"tasks">) : undefined,
+              }
+            );
+            if (!codeResult.success) {
+              console.warn(`execute_code failed: ${codeResult.error}`);
+            }
+          } catch (codeError) {
+            console.warn("execute_code action failed:", codeError);
+          }
+        } else if (action.type === "execute_command") {
+          try {
+            const cmdResult = await ctx.runAction(
+              internal.functions.daytona.executeCommandFromAgent,
+              {
+                userId: args.userId,
+                agentId: args.agentId,
+                command: action.command,
+                workdir: action.workdir,
+                timeout: action.timeout,
+                taskId: action.taskId ? (action.taskId as Id<"tasks">) : undefined,
+              }
+            );
+            if (!cmdResult.success) {
+              console.warn(`execute_command failed: ${cmdResult.error}`);
+            }
+          } catch (cmdError) {
+            console.warn("execute_command action failed:", cmdError);
+          }
         } else if (action.type === "create_knowledge_node") {
           await ctx.runMutation(internal.functions.knowledgeGraph.createNodeFromAgent, {
             userId: args.userId,
@@ -1363,6 +1705,31 @@ export const processMessage = internalAction({
             sourceNodeId: action.sourceNodeId as Id<"knowledgeNodes">,
             targetNodeId: action.targetNodeId as Id<"knowledgeNodes">,
           });
+        } else if (action.type === "browser_navigate") {
+          // Start a new Browser Use session
+          try {
+            await ctx.runAction(internal.functions.browserProfiles.startBrowserSessionFromAgent, {
+              userId: args.userId,
+              agentId: args.agentId,
+              url: action.url,
+              profileId: action.profileId,
+              taskId: action.taskId ? (action.taskId as Id<"tasks">) : undefined,
+            });
+          } catch (browserError) {
+            console.warn("browser_navigate action failed:", browserError);
+          }
+        } else if (action.type === "browser_action") {
+          // Run a task on an existing Browser Use session
+          try {
+            await ctx.runAction(internal.functions.browserProfiles.runBrowserTaskFromAgent, {
+              userId: args.userId,
+              sessionId: action.sessionId,
+              task: action.task,
+              maxSteps: action.maxSteps,
+            });
+          } catch (browserError) {
+            console.warn("browser_action failed:", browserError);
+          }
         }
       } catch (actionError) {
         console.warn("Agent action execution failed:", actionError);
@@ -1489,12 +1856,17 @@ export const autoGenerateGraph = internalAction({
       return { nodesCreated: 0, linksCreated: 0, error: "No agent configuration found" };
     }
 
-    const credentials = await ctx.runQuery(
-      internal.agent.queries.getProviderCredentials,
-      { userId: args.userId, provider: config.provider }
+    // Get LLM candidates with failover support
+    const candidates: LLMCandidate[] = await ctx.runQuery(
+      internal.agent.failover.resolveLLMCandidates,
+      {
+        userId: args.userId,
+        preferredProvider: config.provider,
+        preferredModel: config.model,
+      }
     );
 
-    if (!credentials?.apiKey) {
+    if (candidates.length === 0) {
       return { nodesCreated: 0, linksCreated: 0, error: "No LLM credentials configured" };
     }
 
@@ -1527,14 +1899,26 @@ export const autoGenerateGraph = internalAction({
       { role: "user", content: prompt },
     ];
 
-    let llmResult: { content: string; tokensUsed: number };
+    let llmResult: { content: string; tokensUsed: number; provider: string; model: string };
     try {
-      llmResult = await callLLMProvider(
-        config.provider,
-        credentials.apiKey,
-        config.model,
+      llmResult = await executeWithFailover(
+        candidates,
         messages,
-        credentials.baseUrl
+        async (provider) => {
+          await ctx.runMutation(internal.agent.failover.recordSuccess, {
+            userId: args.userId,
+            provider,
+          });
+        },
+        async (provider, category, message, status) => {
+          await ctx.runMutation(internal.agent.failover.recordFailure, {
+            userId: args.userId,
+            provider,
+            errorCategory: category,
+            errorMessage: message,
+            httpStatus: status,
+          });
+        }
       );
     } catch (error) {
       const msg = error instanceof Error ? error.message : "LLM call failed";

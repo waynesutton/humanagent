@@ -81,6 +81,19 @@ export const BROWSER_AUTOMATION_SERVICES = [
     name: "Browserbase",
     description: "Browser automation via Stagehand and Browser Use",
   },
+  {
+    id: "browser_use",
+    name: "Browser Use",
+    description: "Stateful browser automation with persistent profiles",
+  },
+] as const;
+
+export const MEMORY_SERVICES = [
+  {
+    id: "supermemory",
+    name: "Supermemory",
+    description: "Automatic user profiles built from conversations and tasks",
+  },
 ] as const;
 
 export const X_TWITTER_SERVICES = [
@@ -97,16 +110,38 @@ export const X_TWITTER_SERVICES = [
   },
 ] as const;
 
+export const TOOL_EXECUTION_SERVICES = [
+  {
+    id: "composio",
+    name: "Composio",
+    description: "10,000+ SaaS integrations (Gmail, Slack, GitHub, Notion, etc.) with OAuth handling",
+  },
+] as const;
+
+export const CODE_EXECUTION_SERVICES = [
+  {
+    id: "daytona",
+    name: "Daytona",
+    description: "Secure code execution sandboxes for Python, JavaScript, bash, and more",
+  },
+] as const;
+
 export type ProviderType = (typeof LLM_PROVIDERS)[number]["id"] | "custom";
 export type IntegrationService = (typeof INTEGRATION_SERVICES)[number]["id"];
 export type BrowserAutomationService =
   (typeof BROWSER_AUTOMATION_SERVICES)[number]["id"];
 export type XTwitterService = (typeof X_TWITTER_SERVICES)[number]["id"];
+export type MemoryService = (typeof MEMORY_SERVICES)[number]["id"];
+export type ToolExecutionService = (typeof TOOL_EXECUTION_SERVICES)[number]["id"];
+export type CodeExecutionService = (typeof CODE_EXECUTION_SERVICES)[number]["id"];
 export type CredentialService =
   | ProviderType
   | IntegrationService
   | BrowserAutomationService
-  | XTwitterService;
+  | XTwitterService
+  | MemoryService
+  | ToolExecutionService
+  | CodeExecutionService;
 
 export const platformApi = {
   convex: {
@@ -126,6 +161,8 @@ export const platformApi = {
       rotateApiKey: api.functions.apiKeys.rotate,
       listCredentials: api.functions.credentials.list,
       getCredentialStatus: api.functions.credentials.getLLMProviderStatus,
+      getProviderHealth: api.functions.credentials.getProviderHealth,
+      resetProviderHealth: api.functions.credentials.resetProviderHealth,
       getModelCatalog: api.functions.credentials.getModelCatalog,
       refreshModelCatalog: api.functions.credentials.refreshModelCatalog,
       saveCredential: api.functions.credentials.saveApiKey,
@@ -239,6 +276,9 @@ export const platformApi = {
       getSecurityEvents: api.functions.auditLog.getSecurityEvents,
       exportSecurityCsv: api.functions.auditLog.exportCsv,
       getRateLimitDashboard: api.functions.rateLimits.getDashboard,
+    },
+    voice: {
+      hasVoiceCredential: api.functions.voiceQueries.hasVoiceCredential,
     },
     connectedApps: {
       getPublicByUsername: api.functions.connectedApps.getPublicByUsername,

@@ -2,10 +2,20 @@
 
 Active development tasks and roadmap items.
 
-Session updates complete on 2026-02-19. Last updated 2026-02-19.
+Session updates complete on 2026-03-05. Last updated 2026-03-05.
 
 ## In Progress
 
+- [x] Voice conversation with agents in chat and board pages (2026-02-19, re-wired 2026-02-20)
+- [x] Fix PostCSS plugin `from` option warning by switching to object literal syntax (2026-02-20)
+- [x] Browser Use Cloud and Supermemory integration (2026-03-01)
+- [x] Multi-provider LLM failover strategy (2026-03-02)
+  - [x] Schema: added `llmProviderHealth` table for circuit breaker state and failure tracking
+  - [x] Backend: created `convex/agent/failover.ts` with centralized LLM candidate resolver (`resolveLLMCandidates`), health recording mutations, and error classification
+  - [x] Runtime: integrated `executeWithFailover` in `processMessage` and `autoGenerateGraph` with automatic retry, circuit breaker, and provider fallback
+  - [x] Runtime: added explicit `xai` (Grok) routing in `callLLMProvider` switch
+  - [x] Credentials: added `getProviderHealth` query and `resetProviderHealth` mutation for admin visibility
+  - [x] UI: SettingsPage LLM Providers section shows circuit breaker status, consecutive failures, last error, and reset button
 - [ ] Test workflow pipeline visualization end-to-end: trigger agent task processing and verify steps appear in BoardPage task detail panel
 - [ ] Regression test OpenAI-compatible providers (OpenAI, DeepSeek, MiniMax, Kimi, custom base URLs) after reasoning model detection and token-parameter changes
 - [ ] Verify `gpt-5-nano` and `gpt-5-mini` produce non-empty responses after reasoning_effort + token budget fix
@@ -25,7 +35,8 @@ Session updates complete on 2026-02-19. Last updated 2026-02-19.
 - [ ] terms and privacy poliyc
 - [ ] PDF/image/video report generation for complex task outcomes (beyond markdown text) — external API calls not yet wired
 - [ ] Actual image generation via DALL-E/Stability API when `generate_image` action fires (placeholder wired)
-- [ ] Actual tool execution sandbox for `call_tool` action type (placeholder wired)
+- [x] Composio integration for tool execution (10,000+ SaaS integrations) (2026-03-03)
+- [x] Daytona integration for code execution sandboxes (Python, JS, bash, etc.) (2026-03-03)
 - [ ] Performance dashboard and agent metrics reports
 - [x] Validate agent auto-task processing: confirm auto/cron agents pick up pending tasks via `processAgentTasks` and move them through board columns end to end
 - [ ] Add "Set target date" quick action on in-progress task cards when ETA is unknown
@@ -51,7 +62,7 @@ Session updates complete on 2026-02-19. Last updated 2026-02-19.
 - [x] Vector search for agent memory retrieval
 - [x] Memory compression cron job implementation
 - [x] Agent-to-agent (A2A) communication protocol
-- [ ] Tool execution sandbox for agent actions
+- [x] Tool execution sandbox for agent actions (Composio + Daytona)
 
 ### UI/UX
 
@@ -81,6 +92,47 @@ Session updates complete on 2026-02-19. Last updated 2026-02-19.
 
 ## Completed
 
+- [x] Automation control plane foundation and dispatcher (2026-03-05)
+  - [x] Added PRD `prds/automation-control-plane.md` documenting problem, architecture, scope, and verification
+  - [x] Added schema tables `automationDefinitions` and `automationRuns` with scheduling and observability indexes
+  - [x] Added `convex/functions/automations.ts` with typed APIs for list/create/update/delete definitions, list runs, manual run, and event-trigger lookup
+  - [x] Added centralized dispatcher tick `automationControlPlaneTick` in `convex/crons.ts` and scheduled it every minute via `internal.crons.automationControlPlaneTick`
+  - [x] Reused existing primitive `processAgentTasks` as the first action adapter to avoid behavior changes in current runtime paths
+  - [x] Validation: ran `npm run typecheck`; existing pre-existing repo errors remain outside this change scope, and `ReadLints` reported no lints in changed automation files
+- [x] Browser Use Cloud and Supermemory integration (2026-03-01)
+  - [x] Schema: added `browserProfiles`, `browserSessions`, `supermemoryProfiles` tables with proper indexes
+  - [x] Schema: extended `agents` table with `supermemoryConfig` field
+  - [x] Schema: extended `userCredentials` service union to include `browser_use` and `supermemory`
+  - [x] Backend: created `browserProfilesQueries.ts` with CRUD queries/mutations for browser profiles and sessions
+  - [x] Backend: created `browserProfiles.ts` with Browser Use Cloud API actions (createCloudProfile, createSession, runTask, stopSession)
+  - [x] Backend: created `supermemoryQueries.ts` with profile caching queries/mutations
+  - [x] Backend: created `supermemory.ts` with Supermemory API actions (fetchProfile, addContent, ingestConversation, ingestTaskOutcome)
+  - [x] Runtime: integrated Supermemory profile loading into agent runtime `processMessage` pipeline (step 4c after knowledge graph)
+  - [x] Runtime: added `browser_navigate` and `browser_action` action types to agent runtime parser and executor
+  - [x] Credentials: updated `credentials.ts` to track browser_use and supermemory service status
+  - [x] Agents: added `supermemoryConfig` to agent update mutation args
+  - [x] UI: added Browser Use to BROWSER_AUTOMATION_SERVICES in platformApi.ts
+  - [x] UI: added MEMORY_SERVICES array with Supermemory in platformApi.ts
+  - [x] UI: added Browser Use credential form in SettingsPage
+  - [x] UI: added Memory Services section with Supermemory in SettingsPage
+  - [x] UI: added Supermemory configuration section in AgentsPage edit modal
+  - [x] UI: updated Browser Use checkbox to support both browserbase and browser_use keys
+  - [x] PRD at `prds/browser-use-supermemory-integration.md`
+- [x] Autonomous Thinking Mode social visualization asset (2026-02-19)
+  - [x] Created PRD at `prds/autonomous-thinking-mode-social-visual.md` for a non-product social media visualization artifact
+  - [x] Added standalone animated canvas file `prds/autonomous-thinking-mode-social-visual.html` (dark neon branching style inspired by the reference image)
+  - [x] Included loop stage visualization for Observe, Reason, Decide, Act, Reflect, Notify with keyboard controls for reset and pause during capture
+- [x] Voice conversation with agents (2026-02-19, frontend re-wired 2026-02-20)
+  - [x] `convex/functions/voiceQueries.ts`: `hasVoiceCredential` V8 query that checks for active ElevenLabs or OpenAI credential
+  - [x] `src/hooks/useVoiceChat.ts`: reusable hook with browser SpeechRecognition API, auto-send, TTS playback, interim transcript, cleanup
+  - [x] Agent Chat page: mic button next to Send, listening indicator with live transcript, TTS playback indicator, auto-speak on agent reply
+  - [x] Board page: mic button inside task composer textarea (dictation mode for task descriptions)
+  - [x] `src/lib/platformApi.ts`: added `voice.hasVoiceCredential` to platform API map
+  - [x] Voice gating: mic button disabled with tooltip when no voice credential configured or browser unsupported
+  - [x] PRD at `prds/voice-chat-with-agent.md`
+  - [x] Re-applied lost frontend edits to `AgentChatPage.tsx`, `BoardPage.tsx`, and `platformApi.ts` (2026-02-20)
+- [x] Fix PostCSS plugin `from` option warning (2026-02-20)
+  - [x] Changed `postcss.config.js` from function-call array syntax to object literal syntax so Vite correctly passes the `from` option to PostCSS parsers
 - [x] Knowledge Graph Auto Generate and Live Graph View (2026-02-19)
   - [x] LLM-powered auto generation of knowledge graph nodes: `autoGenerateGraph` internal action in `convex/agent/runtime.ts` reads skill identity, capabilities, and domains, calls user's configured LLM, parses JSON response, creates nodes and bidirectional links
   - [x] Public `triggerAutoGenerate` mutation in `knowledgeGraph.ts` gates on auth and schedules the background action

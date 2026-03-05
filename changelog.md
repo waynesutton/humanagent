@@ -7,6 +7,51 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Automation control plane foundation to centralize trigger and execution orchestration:
+  - Added `automationDefinitions` and `automationRuns` tables in `convex/schema.ts` for unified automation config and run history
+  - Added `convex/functions/automations.ts` with typed APIs for automation definition CRUD, run history listing, manual run, and event-based definition lookup
+  - Added `automationControlPlaneTick` in `convex/crons.ts` and scheduled it every minute as a single dispatcher loop
+  - Initial action adapter support uses existing `processAgentTasks` so current task runtime behavior stays stable while enabling control-plane based scheduling
+- Multi-provider LLM failover strategy: centralized candidate resolution with automatic retry, circuit breaker, and provider fallback. When a configured LLM provider fails (invalid key, rate limit, timeout, server error), the system automatically retries once with backoff, then fails over to the next configured provider. Circuit breaker opens after 3 consecutive failures and auto-resets after 5 minutes.
+- `convex/agent/failover.ts`: centralized LLM-only candidate resolver (`resolveLLMCandidates`) that returns ordered candidates from user DB credentials, health recording mutations (`recordSuccess`, `recordFailure`), error classification (`classifyError`, `isRetryableError`), and admin queries (`getAllProviderHealth`, `resetProviderHealth`).
+- `llmProviderHealth` table in schema with circuit breaker state (consecutiveFailures, breakerOpen, breakerOpenUntil), attempt tracking (lastAttemptAt, lastSuccessAt, lastErrorAt), error details (lastErrorCategory, lastErrorMessage, lastHttpStatus), and aggregate stats (totalAttempts, totalFailures).
+- `executeWithFailover` in agent runtime: loops provider candidates with per-attempt timeout, classifies errors, retries retryable errors once with exponential backoff, records success/failure to health table, and fails over to next provider on transient failures.
+- Explicit xAI (Grok) routing in `callLLMProvider` switch block via new `callXAI` function.
+- Provider health visibility in SettingsPage: LLM provider cards show circuit breaker status badge, consecutive failure count, last error category and message, and a Reset button to manually close the circuit breaker.
+- `getProviderHealth` and `resetProviderHealth` public queries/mutations in `credentials.ts` for admin visibility and manual circuit breaker reset.
+- Browser Use Cloud integration: stateful browser automation with persistent profiles. Users can create browser profiles that maintain login state and cookies across sessions for sites like Slack, GitHub, etc. Agents can initiate browser sessions via `browser_navigate` and control them via `browser_action` action types.
+- Supermemory integration: automatic user profile building from conversations and task outcomes. Static facts persist long term, dynamic context reflects recent activity. Profile context is automatically injected into agent runtime system prompts when enabled.
+- Schema additions: `browserProfiles` and `browserSessions` tables for Browser Use with proper indexes, `supermemoryProfiles` table for caching Supermemory profile data, `supermemoryConfig` field on agents table for per-agent configuration.
+- `convex/functions/browserProfilesQueries.ts`: V8 queries and mutations for browser profile CRUD and session management.
+- `convex/functions/browserProfiles.ts`: Node.js actions for Browser Use Cloud API calls (createCloudProfile, createSession, runTask, stopSession, startBrowserSessionFromAgent, runBrowserTaskFromAgent).
+- `convex/functions/supermemoryQueries.ts`: V8 queries and mutations for Supermemory profile caching with 10 minute TTL.
+- `convex/functions/supermemory.ts`: Node.js actions for Supermemory API calls (fetchProfile, addContent, ingestConversation, ingestTaskOutcome).
+- Agent runtime integration: Supermemory profile context is loaded as step 4c in the context building pipeline (after knowledge graph), injecting static facts and dynamic context into the system prompt.
+- Agent runtime action types: `browser_navigate` starts a new Browser Use session with optional profile, `browser_action` runs tasks on existing sessions.
+- UI: Browser Use credential form in SettingsPage under Browser Automation section.
+- UI: Memory Services section in SettingsPage with Supermemory credential form.
+- UI: Supermemory Integration configuration section in AgentsPage edit modal with enable toggle, container tag input, and sync options for conversations and task outcomes.
+- `BROWSER_AUTOMATION_SERVICES` updated in platformApi.ts to include Browser Use.
+- `MEMORY_SERVICES` array added to platformApi.ts with Supermemory.
+- PRD at `prds/browser-use-supermemory-integration.md`.
+- Autonomous Thinking Mode social visualization asset for sharing the full plan in short-form social content: new standalone canvas animation at `prds/autonomous-thinking-mode-social-visual.html` with dark neon branching motion inspired by the provided reference image, centered autonomous loop hub, and stage ring labels (Observe, Reason, Decide, Act, Reflect, Notify). Includes simple capture controls (`R` reset, `Space` pause) and requires no app runtime integration.
+- Voice conversation with agents: users can now talk to their agents via microphone in the Agent Chat page and Board page. Uses browser Web Speech API for speech-to-text transcription, sends the text as a regular message, and auto-plays the agent's TTS response. Requires at least one voice credential (ElevenLabs or OpenAI) configured in Settings. Mic button appears next to Send in Agent Chat (conversation mode with auto-send and auto-speak) and inside the Board task composer textarea (dictation mode). Listening indicator with live interim transcript, TTS playback indicator with audio visualizer, and auto-speak on agent reply.
+- Composio integration: tool execution layer enabling agents to interact with 10,000+ SaaS applications (Gmail, Slack, GitHub, Notion, etc.) with OAuth handling. Replaces the `call_tool` placeholder with real execution. Users configure their Composio API key in Settings under Tool Execution, connect apps via the Composio dashboard, and agents can call tools using the `call_tool` action type.
+- Daytona integration: secure code execution sandboxes for running Python, JavaScript, TypeScript, bash, Go, and Rust code. Adds `execute_code` and `execute_command` action types for agents. Supports sub-90ms sandbox provisioning with automatic cleanup. Users configure their Daytona API key in Settings under Code Execution.
+- `convex/functions/composioQueries.ts`: V8 queries for Composio status and credential lookup.
+- `convex/functions/composio.ts`: Node.js actions for Composio API (executeTool, listAvailableTools, listConnectedApps, executeToolFromAgent).
+- `convex/functions/daytonaQueries.ts`: V8 queries for Daytona status and credential lookup.
+- `convex/functions/daytona.ts`: Node.js actions for Daytona sandbox API (executeCode, executeCommand, executeCodeFromAgent, executeCommandFromAgent).
+- Agent runtime wiring: `call_tool` action now routes to Composio for execution, `execute_code` and `execute_command` actions route to Daytona sandboxes.
+- Schema additions: `composio` and `daytona` added to userCredentials service union for BYOK credential storage.
+- UI: Tool Execution section in SettingsPage with Composio credential form.
+- UI: Code Execution section in SettingsPage with Daytona credential form.
+- `TOOL_EXECUTION_SERVICES` and `CODE_EXECUTION_SERVICES` arrays added to platformApi.ts.
+- PRD at `prds/composio-daytona-integration.md`.
+- `convex/functions/voiceQueries.ts`: V8 query `hasVoiceCredential` that checks if the user has an active ElevenLabs or OpenAI credential, used to gate the mic button on the frontend.
+- `src/hooks/useVoiceChat.ts`: reusable hook encapsulating browser SpeechRecognition API, auto-send transcribed text, TTS playback, and cleanup. Supports dictation mode (no auto-send) for task descriptions and comments.
+- `src/lib/platformApi.ts`: added `voice.hasVoiceCredential` to the platform API map.
+- PRD at `prds/voice-chat-with-agent.md`.
 - Knowledge Graph Auto Generate: "Auto Generate" button in the Knowledge Graph section calls the user's configured LLM to analyze a skill's identity, capabilities, and domains, then creates 8 to 15 interconnected knowledge nodes with a central MOC index node. Gated on having an LLM provider configured. Agent selector dropdown for multi-agent setups. Backend `autoGenerateGraph` internal action in `convex/agent/runtime.ts` and `triggerAutoGenerate` public mutation in `convex/functions/knowledgeGraph.ts`.
 - Live Knowledge Graph visualization: interactive Canvas-based force-directed graph view in `src/components/KnowledgeGraphCanvas.tsx`. Zero external dependencies. Nodes color-coded by type (concept blue, technique green, reference purple, moc orange, claim amber, procedure pink), edges show bidirectional links, drag to reposition nodes, pan and zoom the viewport, hover for type/tag tooltips, click to select. Legend and zoom controls overlay. List/graph view toggle button in the Knowledge Graph section header.
 - `SelectedNodeDetail` panel below graph view showing full content, tags, and clickable linked node navigation when a node is selected in graph mode.
@@ -16,10 +61,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- Project tracking docs now include the automation control plane session updates in `TASK.md` and `files.md` for current architecture inventory and completion tracking.
 - Pipeline section in BoardPage task detail modal now renders inside a padded card container (`rounded-lg border border-surface-3 bg-surface-1 p-4`) so the collapsible workflow view has proper spacing and visual separation from surrounding content
 
 ### Fixed
 
+- Fixed PostCSS plugin `from` option warning by switching `postcss.config.js` from function-call array syntax (`plugins: [tailwindcss(), autoprefixer()]`) to object literal syntax (`plugins: { tailwindcss: {}, autoprefixer: {} }`) so Vite correctly passes the `from` option to PostCSS parsers
 - Silenced React Router v6 future flag console warnings (`v7_startTransition`, `v7_relativeSplatPath`) by opting in early on `BrowserRouter` in `src/main.tsx`
 - ElevenLabs TTS 401/403 errors now return a clean user-facing message ("API key is invalid or account quota exceeded") instead of dumping the raw provider JSON into the console and stack trace. Same handling added for OpenAI TTS 401/403 in `convex/agent/tts.ts`.
 - Internal Convex task IDs (like `ks74jc9z0t743mq80fw1y4558181fahx`) no longer leak into outcome text, UI, TTS audio, or email. Three layers of defense: (1) LLM prompt in `crons.ts` now instructs the model to keep IDs out of human-readable text, (2) `stripInternalIds` sanitizer in `runtime.ts` removes Convex ID patterns before storing `outcomeSummary`, (3) `voice.ts` strips IDs at TTS consumption time so even existing DB records with leaked IDs are never spoken aloud.

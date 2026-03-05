@@ -10,6 +10,7 @@ import { Doc, Id } from "../../convex/_generated/dataModel";
 import { useEscapeKey } from "../hooks/useEscapeKey";
 import { notify } from "../lib/notify";
 import { platformApi } from "../lib/platformApi";
+import { useVoiceChat } from "../hooks/useVoiceChat";
 
 // Type aliases for cleaner code
 type BoardColumn = Doc<"boardColumns">;
@@ -97,7 +98,16 @@ export function BoardPage() {
   const [selectedProject, setSelectedProject] = useState<Id<"boardProjects"> | "none">("none");
   const [newTaskIsPublic, setNewTaskIsPublic] = useState(false);
   const [newTaskTargetCompletionAt, setNewTaskTargetCompletionAt] = useState("");
-  
+
+  // Voice dictation for task composer (no auto-send, just fills text)
+  const noopSend = useCallback(async () => {}, []);
+  const voiceTaskCompose = useVoiceChat({
+    agentId: selectedAgent !== "none" ? selectedAgent : null,
+    onTranscript: (text: string) => setNewTaskText(text),
+    onSendMessage: noopSend,
+    autoSend: false,
+  });
+
   // Edit task
   const [editingTask, setEditingTask] = useState<Id<"tasks"> | null>(null);
   const [editDescription, setEditDescription] = useState("");
@@ -865,14 +875,41 @@ export function BoardPage() {
             {/* ChatGPT-style task compose area */}
             <form onSubmit={handleCreateTask}>
               <div className="rounded-2xl border border-surface-3 bg-surface-0 px-4 pb-3 pt-4 shadow-sm transition-colors focus-within:border-ink-2">
-                <textarea
-                  value={newTaskText}
-                  onChange={(e) => setNewTaskText(e.target.value)}
-                  onKeyDown={handleTaskComposerKeyDown}
-                  placeholder="What needs to be done?"
-                  className="w-full resize-none bg-transparent text-base text-ink-0 placeholder:text-ink-2 outline-none"
-                  rows={2}
-                />
+                <div className="relative">
+                  <textarea
+                    value={newTaskText}
+                    onChange={(e) => setNewTaskText(e.target.value)}
+                    onKeyDown={handleTaskComposerKeyDown}
+                    placeholder={voiceTaskCompose.isListening ? "Listening..." : "What needs to be done?"}
+                    className="w-full resize-none bg-transparent text-base text-ink-0 placeholder:text-ink-2 outline-none pr-10"
+                    rows={2}
+                    disabled={voiceTaskCompose.isListening}
+                  />
+                  {/* Mic button in task composer */}
+                  {voiceTaskCompose.isSupported && voiceTaskCompose.voiceAvailable && (
+                    <button
+                      type="button"
+                      onClick={voiceTaskCompose.isListening ? voiceTaskCompose.stopListening : voiceTaskCompose.startListening}
+                      className={`absolute right-1 top-1 rounded-full p-1.5 transition-all ${
+                        voiceTaskCompose.isListening
+                          ? "bg-red-50 text-red-600 hover:bg-red-100"
+                          : "text-ink-2 hover:text-ink-1 hover:bg-surface-2"
+                      }`}
+                      title={voiceTaskCompose.isListening ? "Stop listening" : "Dictate task"}
+                    >
+                      {voiceTaskCompose.isListening ? (
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                        </svg>
+                      ) : (
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4M12 15a3 3 0 003-3V5a3 3 0 00-6 0v7a3 3 0 003 3z" />
+                        </svg>
+                      )}
+                    </button>
+                  )}
+                </div>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <select
                     value={selectedColumn ?? ""}

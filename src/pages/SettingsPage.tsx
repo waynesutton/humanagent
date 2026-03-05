@@ -8,11 +8,14 @@ import { applyTheme, type ThemeMode } from "../lib/theme";
 import { useEscapeKey } from "../hooks/useEscapeKey";
 import {
   BROWSER_AUTOMATION_SERVICES,
+  CODE_EXECUTION_SERVICES,
   type CredentialService,
   INTEGRATION_SERVICES,
   LLM_PROVIDERS,
+  MEMORY_SERVICES,
   platformApi,
   type ProviderType,
+  TOOL_EXECUTION_SERVICES,
   X_TWITTER_SERVICES,
 } from "../lib/platformApi";
 type CredentialRow = {
@@ -191,6 +194,24 @@ export function SettingsPage() {
     | CredentialRow[]
     | undefined;
   const llmProviderStatus = useQuery(platformApi.convex.settings.getCredentialStatus);
+  const providerHealth = useQuery(platformApi.convex.settings.getProviderHealth) as
+    | Record<
+        string,
+        {
+          consecutiveFailures: number;
+          breakerOpen: boolean;
+          breakerOpenUntil?: number;
+          lastAttemptAt?: number;
+          lastSuccessAt?: number;
+          lastErrorAt?: number;
+          lastErrorCategory?: string;
+          lastErrorMessage?: string;
+          totalAttempts: number;
+          totalFailures: number;
+        }
+      >
+    | undefined;
+  const resetProviderHealth = useMutation(platformApi.convex.settings.resetProviderHealth);
   const isAdmin = useQuery(platformApi.convex.admin.isAdmin);
   const securityEvents = useQuery(
     platformApi.convex.security.getSecurityEvents
@@ -1516,22 +1537,50 @@ export function SettingsPage() {
                 {LLM_PROVIDERS.map((provider) => {
                   const status = llmProviderStatus?.[provider.id];
                   const hasKey = status?.configured;
+                  const health = providerHealth?.[provider.id];
+                  const isBreakerOpen = health?.breakerOpen && (!health.breakerOpenUntil || health.breakerOpenUntil > Date.now());
 
                   return (
-                    <div key={provider.id} className="rounded-lg border border-surface-3 bg-surface-1 p-3">
+                    <div key={provider.id} className={`rounded-lg border ${isBreakerOpen ? "border-red-300 bg-red-50" : "border-surface-3 bg-surface-1"} p-3`}>
                       <div className="flex items-center justify-between">
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             <span className="font-medium text-ink-0">{provider.name}</span>
-                            {hasKey && (
+                            {hasKey && !isBreakerOpen && (
                               <span className="rounded bg-green-100 px-1.5 py-0.5 text-xs text-green-700">
                                 Configured
                               </span>
                             )}
+                            {isBreakerOpen && (
+                              <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-700">
+                                Circuit Open
+                              </span>
+                            )}
+                            {health && health.consecutiveFailures > 0 && !isBreakerOpen && (
+                              <span className="rounded bg-yellow-100 px-1.5 py-0.5 text-xs text-yellow-700">
+                                {health.consecutiveFailures} failures
+                              </span>
+                            )}
                           </div>
                           <p className="mt-0.5 text-xs text-ink-2">{provider.description}</p>
+                          {health && health.lastErrorMessage && (
+                            <p className="mt-1 text-xs text-red-600 truncate" title={health.lastErrorMessage}>
+                              Last error: {health.lastErrorCategory} {health.lastErrorMessage.slice(0, 60)}{health.lastErrorMessage.length > 60 ? "..." : ""}
+                            </p>
+                          )}
                         </div>
                         <div className="flex items-center gap-2">
+                          {isBreakerOpen && (
+                            <button
+                              onClick={() => {
+                                void resetProviderHealth({ provider: provider.id as "openrouter" | "anthropic" | "openai" | "deepseek" | "google" | "mistral" | "minimax" | "kimi" | "xai" | "custom" });
+                              }}
+                              className="btn-secondary text-sm text-red-600 border-red-300 hover:bg-red-50"
+                              title="Reset circuit breaker"
+                            >
+                              Reset
+                            </button>
+                          )}
                           {hasKey ? (
                             <>
                               <button
@@ -1891,6 +1940,16 @@ export function SettingsPage() {
                                 </p>
                               </div>
                             )}
+                            {service.id === "browser_use" && (
+                              <div className="space-y-1">
+                                <p className="text-xs text-ink-2">
+                                  Get your API key at <a href="https://cloud.browser-use.com" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">cloud.browser-use.com</a>
+                                </p>
+                                <p className="text-xs text-ink-2">
+                                  Enables stateful browser automation with persistent profiles (login state, cookies) across sessions.
+                                </p>
+                              </div>
+                            )}
                           </div>
                           <div className="mt-3 flex gap-2">
                             <button
@@ -2008,6 +2067,333 @@ export function SettingsPage() {
                                 </p>
                                 <p className="text-xs text-ink-2">
                                   Enables direct posting, replying, and account management on X.
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                          <div className="mt-3 flex gap-2">
+                            <button
+                              onClick={() => handleSaveByok(service.id)}
+                              disabled={savingByok || !byokApiKey.trim()}
+                              className="btn-accent text-sm"
+                            >
+                              {savingByok ? "Saving..." : "Save key"}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowByokForm(null);
+                                setByokApiKey("");
+                                setByokBaseUrl("");
+                              }}
+                              className="btn-secondary text-sm"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Memory Services */}
+            <div className="mt-6">
+              <h3 className="text-sm font-medium text-ink-0">Memory Services</h3>
+              <p className="mt-1 text-xs text-ink-2">
+                Enable automatic user profile building from conversations and task outcomes.
+              </p>
+              <div className="mt-3 space-y-2">
+                {MEMORY_SERVICES.map((service) => {
+                  const cred = credentials?.find((c) => c.service === service.id);
+                  const hasKey = cred?.hasApiKey;
+
+                  return (
+                    <div key={service.id} className="rounded-lg border border-surface-3 bg-surface-1 p-3">
+                      <div className="flex items-center justify-between">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-ink-0">{service.name}</span>
+                            {hasKey && (
+                              <span className="rounded-full bg-green-500/20 px-2 py-0.5 text-xs text-green-400">
+                                Configured
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-0.5 text-xs text-ink-2">{service.description}</p>
+                        </div>
+                        <div className="ml-4 flex items-center gap-2">
+                          {hasKey ? (
+                            <>
+                              <button
+                                onClick={() => setShowByokForm(service.id)}
+                                className="rounded p-2 text-ink-2 hover:bg-surface-2 hover:text-ink-0 transition-colors"
+                                title="Edit key"
+                              >
+                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                </svg>
+                              </button>
+                              <button
+                                onClick={() => handleRemoveCredential(service.id)}
+                                className="rounded p-2 text-ink-2 hover:bg-surface-2 hover:text-red-500 transition-colors"
+                                title="Remove key"
+                              >
+                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => setShowByokForm(service.id)}
+                              className="btn-secondary text-sm"
+                            >
+                              Add key
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {showByokForm === service.id && (
+                        <div className="mt-3 border-t border-surface-3 pt-3">
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-xs font-medium text-ink-1">API Key</label>
+                              <input
+                                type="password"
+                                value={byokApiKey}
+                                onChange={(e) => setByokApiKey(e.target.value)}
+                                className="input mt-1 text-sm"
+                                placeholder={`Enter your ${service.name} API key`}
+                              />
+                            </div>
+                            {service.id === "supermemory" && (
+                              <div className="space-y-1">
+                                <p className="text-xs text-ink-2">
+                                  Get your API key at <a href="https://supermemory.ai" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">supermemory.ai</a>
+                                </p>
+                                <p className="text-xs text-ink-2">
+                                  Enables automatic user profile building from conversations. Static facts persist long term, dynamic context reflects recent activity.
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                          <div className="mt-3 flex gap-2">
+                            <button
+                              onClick={() => handleSaveByok(service.id)}
+                              disabled={savingByok || !byokApiKey.trim()}
+                              className="btn-accent text-sm"
+                            >
+                              {savingByok ? "Saving..." : "Save key"}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowByokForm(null);
+                                setByokApiKey("");
+                                setByokBaseUrl("");
+                              }}
+                              className="btn-secondary text-sm"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Tool Execution Services (Composio) */}
+            <div className="mt-6">
+              <h3 className="text-sm font-medium text-ink-0">Tool Execution</h3>
+              <p className="mt-1 text-xs text-ink-2">
+                Enable agents to execute tools and interact with external SaaS applications.
+              </p>
+              <div className="mt-3 space-y-2">
+                {TOOL_EXECUTION_SERVICES.map((service) => {
+                  const cred = credentials?.find((c) => c.service === service.id);
+                  const hasKey = cred?.hasApiKey;
+
+                  return (
+                    <div key={service.id} className="rounded-lg border border-surface-3 bg-surface-1 p-3">
+                      <div className="flex items-center justify-between">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-ink-0">{service.name}</span>
+                            {hasKey && (
+                              <span className="rounded-full bg-green-500/20 px-2 py-0.5 text-xs text-green-400">
+                                Configured
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-0.5 text-xs text-ink-2">{service.description}</p>
+                        </div>
+                        <div className="ml-4 flex items-center gap-2">
+                          {hasKey ? (
+                            <>
+                              <button
+                                onClick={() => setShowByokForm(service.id)}
+                                className="rounded p-2 text-ink-2 hover:bg-surface-2 hover:text-ink-0 transition-colors"
+                                title="Edit key"
+                              >
+                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                </svg>
+                              </button>
+                              <button
+                                onClick={() => handleRemoveCredential(service.id)}
+                                className="rounded p-2 text-ink-2 hover:bg-surface-2 hover:text-red-500 transition-colors"
+                                title="Remove key"
+                              >
+                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => setShowByokForm(service.id)}
+                              className="btn-secondary text-sm"
+                            >
+                              Add key
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {showByokForm === service.id && (
+                        <div className="mt-3 border-t border-surface-3 pt-3">
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-xs font-medium text-ink-1">API Key</label>
+                              <input
+                                type="password"
+                                value={byokApiKey}
+                                onChange={(e) => setByokApiKey(e.target.value)}
+                                className="input mt-1 text-sm"
+                                placeholder={`Enter your ${service.name} API key`}
+                              />
+                            </div>
+                            {service.id === "composio" && (
+                              <div className="space-y-1">
+                                <p className="text-xs text-ink-2">
+                                  Get your API key at <a href="https://app.composio.dev/settings" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">composio.dev</a>
+                                </p>
+                                <p className="text-xs text-ink-2">
+                                  Enables agents to interact with Gmail, Slack, GitHub, Notion, and 10,000+ other apps. Connect apps via the Composio dashboard.
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                          <div className="mt-3 flex gap-2">
+                            <button
+                              onClick={() => handleSaveByok(service.id)}
+                              disabled={savingByok || !byokApiKey.trim()}
+                              className="btn-accent text-sm"
+                            >
+                              {savingByok ? "Saving..." : "Save key"}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowByokForm(null);
+                                setByokApiKey("");
+                                setByokBaseUrl("");
+                              }}
+                              className="btn-secondary text-sm"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Code Execution Services (Daytona) */}
+            <div className="mt-6">
+              <h3 className="text-sm font-medium text-ink-0">Code Execution</h3>
+              <p className="mt-1 text-xs text-ink-2">
+                Enable agents to execute code in secure sandboxed environments.
+              </p>
+              <div className="mt-3 space-y-2">
+                {CODE_EXECUTION_SERVICES.map((service) => {
+                  const cred = credentials?.find((c) => c.service === service.id);
+                  const hasKey = cred?.hasApiKey;
+
+                  return (
+                    <div key={service.id} className="rounded-lg border border-surface-3 bg-surface-1 p-3">
+                      <div className="flex items-center justify-between">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-ink-0">{service.name}</span>
+                            {hasKey && (
+                              <span className="rounded-full bg-green-500/20 px-2 py-0.5 text-xs text-green-400">
+                                Configured
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-0.5 text-xs text-ink-2">{service.description}</p>
+                        </div>
+                        <div className="ml-4 flex items-center gap-2">
+                          {hasKey ? (
+                            <>
+                              <button
+                                onClick={() => setShowByokForm(service.id)}
+                                className="rounded p-2 text-ink-2 hover:bg-surface-2 hover:text-ink-0 transition-colors"
+                                title="Edit key"
+                              >
+                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                </svg>
+                              </button>
+                              <button
+                                onClick={() => handleRemoveCredential(service.id)}
+                                className="rounded p-2 text-ink-2 hover:bg-surface-2 hover:text-red-500 transition-colors"
+                                title="Remove key"
+                              >
+                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => setShowByokForm(service.id)}
+                              className="btn-secondary text-sm"
+                            >
+                              Add key
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {showByokForm === service.id && (
+                        <div className="mt-3 border-t border-surface-3 pt-3">
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-xs font-medium text-ink-1">API Key</label>
+                              <input
+                                type="password"
+                                value={byokApiKey}
+                                onChange={(e) => setByokApiKey(e.target.value)}
+                                className="input mt-1 text-sm"
+                                placeholder={`Enter your ${service.name} API key`}
+                              />
+                            </div>
+                            {service.id === "daytona" && (
+                              <div className="space-y-1">
+                                <p className="text-xs text-ink-2">
+                                  Get your API key at <a href="https://www.daytona.io/docs/" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">daytona.io</a>
+                                </p>
+                                <p className="text-xs text-ink-2">
+                                  Enables agents to run Python, JavaScript, bash, and other code in isolated sandboxes. Supports sub-90ms sandbox provisioning.
                                 </p>
                               </div>
                             )}

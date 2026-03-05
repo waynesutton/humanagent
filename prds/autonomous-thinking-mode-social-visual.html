@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Autonomous Thinking Mode</title>
+    <style>
+      * { margin: 0; box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a1a; }
+      canvas { display: block; position: fixed; inset: 0; }
+      .caption {
+        position: fixed;
+        bottom: 24px;
+        left: 50%;
+        transform: translateX(-50%);
+        text-align: center;
+        font-family: "SF Mono", "Fira Code", Menlo, monospace;
+        pointer-events: none;
+        z-index: 2;
+        width: 90%;
+        max-width: 640px;
+      }
+      .caption .stage {
+        font-size: clamp(13px, 1.6vw, 17px);
+        color: rgba(255, 255, 255, 0.92);
+        letter-spacing: 0.02em;
+        transition: color 0.4s;
+      }
+      .caption .detail {
+        margin-top: 4px;
+        font-size: clamp(10px, 1.1vw, 13px);
+        color: rgba(255, 255, 255, 0.52);
+        transition: color 0.4s;
+      }
+      .caption .cycles {
+        margin-top: 6px;
+        font-size: clamp(9px, 0.95vw, 11px);
+        color: rgba(255, 255, 255, 0.35);
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div class="caption">
+      <div class="stage" id="stageLabel">initializing agent...</div>
+      <div class="detail" id="stageDetail"></div>
+      <div class="cycles" id="cycleCount"></div>
+    </div>
+    <script>
+      const canvas = document.getElementById("c");
+      const ctx = canvas.getContext("2d");
+      let W, H, dpr;
+
+      // The cognitive loop from the plan, in order
+      const STEPS = [
+        { name: "Observe",  detail: "loading context, tasks, goals, memories, knowledge graph",  color: [96, 165, 250] },
+        { name: "Reason",   detail: "LLM call with thinking prompt",                             color: [34, 211, 238] },
+        { name: "Parse",    detail: "extracting thinking blocks and app_actions",                 color: [100, 220, 190] },
+        { name: "Approve",  detail: "classifying risk level for each action",                    color: [220, 200, 80] },
+        { name: "Act",      detail: "executing create_task, update_skill, send_email, web_search", color: [251, 191, 36] },
+        { name: "Reflect",  detail: "saving thoughts, extracting facts, updating goal",          color: [244, 114, 182] },
+        { name: "Notify",   detail: "in-app notification and AgentMail digest",                  color: [167, 139, 250] },
+        { name: "Record",   detail: "saving thinkingCycle with token usage and actions log",     color: [130, 170, 255] },
+        { name: "Memory",   detail: "fact extraction, conflict resolution, tiered retrieval",    color: [80, 200, 160] },
+        { name: "Compress", detail: "LLM-powered memory synthesis, dedup, time decay scoring",   color: [200, 140, 240] },
+      ];
+
+      let vines = [];
+      let frame = 0;
+      let paused = false;
+      let stepIndex = 0;
+      let cycleCount = 0;
+      let stepTimer = 0;
+      const STEP_INTERVAL = 110; // frames between stages
+
+      // The tip of the most recent primary vine (next stage forks from here)
+      let lastTipX, lastTipY;
+
+      function resize() {
+        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        W = window.innerWidth;
+        H = window.innerHeight;
+        canvas.width = Math.floor(W * dpr);
+        canvas.height = Math.floor(H * dpr);
+        canvas.style.width = W + "px";
+        canvas.style.height = H + "px";
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        lastTipX = W * 0.5;
+        lastTipY = H * 0.5;
+      }
+
+      function rand(lo, hi) { return lo + Math.random() * (hi - lo); }
+      function rgba(c, a) { return "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + a + ")"; }
+
+      function createVine(ox, oy, angle, color, depth, parentSpeed) {
+        const speed = depth === 0 ? rand(0.7, 1.3) : Math.max(0.25, parentSpeed * rand(0.65, 0.92));
+        const maxLen = depth === 0 ? rand(180, 420) : rand(40, 200 - depth * 25);
+        return {
+          x: ox, y: oy, angle, speed, maxLen, len: 0,
+          curvature: rand(0.004, 0.03) * (Math.random() < 0.5 ? 1 : -1),
+          wobbleFreq: rand(0.01, 0.04),
+          wobbleAmp: rand(0.008, 0.05),
+          lineW: Math.max(0.25, (depth === 0 ? rand(1.5, 2.6) : rand(0.4, 1.6)) - depth * 0.2),
+          color, depth, alive: true,
+          forked: false, forkAt: rand(0.3, 0.8),
+          born: frame, isPrimary: depth === 0,
+        };
+      }
+
+      // Advance to the next cognitive step and spawn a new primary vine from the last tip
+      function advanceStep() {
+        const step = STEPS[stepIndex];
+
+        // Primary vine grows from the tip of the previous one
+        const angle = rand(-Math.PI, Math.PI);
+        const vine = createVine(lastTipX, lastTipY, angle, step.color, 0, 1);
+        vines.push(vine);
+
+        // Update caption
+        document.getElementById("stageLabel").textContent = step.name.toLowerCase() + ": " + step.detail;
+        document.getElementById("stageLabel").style.color = rgba(step.color, 0.92);
+
+        stepIndex++;
+        if (stepIndex >= STEPS.length) {
+          stepIndex = 0;
+          cycleCount++;
+          document.getElementById("cycleCount").textContent =
+            cycleCount + " full cycle" + (cycleCount === 1 ? "" : "s") + " completed";
+        }
+
+        const progress = STEPS.slice(0, stepIndex).map(function (s, i) {
+          return s.name;
+        });
+        if (stepIndex > 0) {
+          document.getElementById("stageDetail").textContent = progress.join(" > ");
+        } else {
+          document.getElementById("stageDetail").textContent = "cycle complete, restarting...";
+        }
+      }
+
+      function growVines() {
+        const spawned = [];
+        const cap = 1400;
+
+        for (let i = 0; i < vines.length; i++) {
+          const v = vines[i];
+          if (!v.alive) continue;
+
+          const age = frame - v.born;
+          v.angle += v.curvature + Math.sin(age * v.wobbleFreq) * v.wobbleAmp;
+          const nx = v.x + Math.cos(v.angle) * v.speed;
+          const ny = v.y + Math.sin(v.angle) * v.speed;
+
+          const alpha = Math.max(0.06, 0.6 - v.depth * 0.07);
+          const c = v.color;
+
+          // Glow layer
+          ctx.save();
+          ctx.globalAlpha = alpha * 0.3;
+          ctx.strokeStyle = rgba(c, 1);
+          ctx.lineWidth = v.lineW * 3;
+          ctx.shadowColor = rgba(c, 1);
+          ctx.shadowBlur = 10;
+          ctx.lineCap = "round";
+          ctx.beginPath();
+          ctx.moveTo(v.x, v.y);
+          ctx.lineTo(nx, ny);
+          ctx.stroke();
+          ctx.restore();
+
+          // Core line
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          ctx.strokeStyle = rgba(c, 1);
+          ctx.lineWidth = v.lineW;
+          ctx.lineCap = "round";
+          ctx.beginPath();
+          ctx.moveTo(v.x, v.y);
+          ctx.lineTo(nx, ny);
+          ctx.stroke();
+          ctx.restore();
+
+          // Particles
+          if (Math.random() < 0.012) {
+            ctx.save();
+            ctx.globalAlpha = rand(0.3, 0.65);
+            ctx.fillStyle = rgba(c, 1);
+            ctx.shadowColor = rgba(c, 1);
+            ctx.shadowBlur = 5;
+            ctx.beginPath();
+            ctx.arc(nx + rand(-3, 3), ny + rand(-3, 3), rand(0.5, 1.4), 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+
+          v.x = nx;
+          v.y = ny;
+          v.len += v.speed;
+
+          // Track tip of primary vines so next step forks from here
+          if (v.isPrimary) {
+            lastTipX = nx;
+            lastTipY = ny;
+          }
+
+          // Fork child branches
+          if (!v.forked && v.len / v.maxLen > v.forkAt && v.depth < 6 && vines.length + spawned.length < cap) {
+            v.forked = true;
+            const forks = v.depth < 2 ? Math.floor(rand(2, 4)) : Math.floor(rand(1, 3));
+            for (let k = 0; k < forks; k++) {
+              const childAngle = v.angle + rand(-1.1, 1.1);
+              // Nearby color from the palette
+              const ci = Math.floor(rand(0, STEPS.length));
+              spawned.push(createVine(v.x, v.y, childAngle, STEPS[ci].color, v.depth + 1, v.speed));
+            }
+          }
+
+          if (v.len >= v.maxLen || v.x < -60 || v.x > W + 60 || v.y < -60 || v.y > H + 60) {
+            v.alive = false;
+          }
+        }
+
+        for (let i = 0; i < spawned.length; i++) vines.push(spawned[i]);
+        if (vines.length > cap) vines.splice(0, vines.length - cap);
+      }
+
+      function drawBackground() {
+        ctx.fillStyle = "rgba(10, 10, 26, 0.035)";
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      function loop() {
+        if (!paused) {
+          frame++;
+          drawBackground();
+          growVines();
+
+          // Advance through the cognitive loop one step at a time
+          stepTimer++;
+          if (stepTimer >= STEP_INTERVAL) {
+            stepTimer = 0;
+            advanceStep();
+          }
+        }
+        requestAnimationFrame(loop);
+      }
+
+      // Click to spawn an extra agent burst at that position
+      canvas.addEventListener("click", function (e) {
+        lastTipX = e.clientX;
+        lastTipY = e.clientY;
+        advanceStep();
+      });
+      canvas.addEventListener("touchstart", function (e) {
+        e.preventDefault();
+        lastTipX = e.touches[0].clientX;
+        lastTipY = e.touches[0].clientY;
+        advanceStep();
+      }, { passive: false });
+
+      window.addEventListener("keydown", function (e) {
+        if (e.code === "Space") { paused = !paused; e.preventDefault(); }
+        if (e.key.toLowerCase() === "r") {
+          vines.length = 0;
+          frame = 0;
+          stepIndex = 0;
+          stepTimer = 0;
+          cycleCount = 0;
+          ctx.clearRect(0, 0, W, H);
+          lastTipX = W * 0.5;
+          lastTipY = H * 0.5;
+          document.getElementById("stageLabel").textContent = "initializing agent...";
+          document.getElementById("stageLabel").style.color = "rgba(255,255,255,0.92)";
+          document.getElementById("stageDetail").textContent = "";
+          document.getElementById("cycleCount").textContent = "";
+        }
+      });
+
+      window.addEventListener("resize", resize);
+      resize();
+      requestAnimationFrame(loop);
+    </script>
+  </body>
+</html>

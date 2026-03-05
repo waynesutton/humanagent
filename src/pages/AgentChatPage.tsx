@@ -4,6 +4,7 @@ import { api } from "../../convex/_generated/api";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
 import { Id } from "../../convex/_generated/dataModel";
 import { notify } from "../lib/notify";
+import { useVoiceChat } from "../hooks/useVoiceChat";
 
 interface ChatMessage {
   role: "agent" | "external";
@@ -120,6 +121,52 @@ export function AgentChatPage() {
     if (!chats || !selectedConversationId) return null;
     return (chats.find((chat: AgentChat) => chat._id === selectedConversationId) as AgentChat | undefined) ?? null;
   }, [chats, selectedConversationId]);
+
+  // Voice chat: speech-to-text + auto TTS for agent responses
+  const voiceSendMessage = useCallback(
+    async (text: string) => {
+      if (!selectedConversationId || !text.trim()) return;
+      const agentMsgCount =
+        selectedConversation?.messages.filter((m: ChatMessage) => m.role === "agent").length ?? 0;
+      setDraft("");
+      try {
+        setIsBusy(true);
+        setAwaitingAgentReply(true);
+        setPendingReplyConversationId(selectedConversationId);
+        setPendingReplyAgentCountBaseline(agentMsgCount);
+        await sendDashboardMessage({ conversationId: selectedConversationId, content: text });
+      } catch (error) {
+        notify.error("Could not send message", error);
+        setDraft(text);
+        setAwaitingAgentReply(false);
+        setPendingReplyConversationId(null);
+        setPendingReplyAgentCountBaseline(null);
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [selectedConversationId, selectedConversation, sendDashboardMessage]
+  );
+
+  const voiceChat = useVoiceChat({
+    agentId: selectedAgentId,
+    onTranscript: (text: string) => setDraft(text),
+    onSendMessage: voiceSendMessage,
+    autoSend: true,
+  });
+
+  // Auto-speak the latest agent response when it arrives
+  const prevAwaitingRef = useRef(false);
+  useEffect(() => {
+    if (prevAwaitingRef.current && !awaitingAgentReply && voiceChat.voiceAvailable) {
+      const messages = selectedConversation?.messages;
+      const lastMsg = messages?.[messages.length - 1];
+      if (lastMsg?.role === "agent" && lastMsg.content.trim()) {
+        void voiceChat.speakText(lastMsg.content);
+      }
+    }
+    prevAwaitingRef.current = awaitingAgentReply;
+  }, [awaitingAgentReply, selectedConversation?.messages, voiceChat]);
 
   useEffect(() => {
     if (!awaitingAgentReply || !pendingReplyConversationId || !chats) return;
@@ -380,15 +427,64 @@ export function AgentChatPage() {
                 </div>
 
                 <div className="border-t border-surface-3 p-4">
+                  {/* Voice listening indicator */}
+                  {voiceChat.isListening && (
+                    <div className="mb-3 flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2">
+                      <div className="relative flex h-3 w-3">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+                        <span className="relative inline-flex h-3 w-3 rounded-full bg-red-500" />
+                      </div>
+                      <span className="text-sm text-red-700">Listening...</span>
+                      {voiceChat.interimTranscript && (
+                        <span className="ml-2 text-sm text-red-500 italic truncate">
+                          {voiceChat.interimTranscript}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={voiceChat.stopListening}
+                        className="ml-auto text-xs text-red-600 hover:text-red-800"
+                      >
+                        Stop
+                      </button>
+                    </div>
+                  )}
+
+                  {/* TTS playback indicator */}
+                  {(voiceChat.isSpeaking || voiceChat.isGeneratingAudio) && (
+                    <div className="mb-3 flex items-center gap-2 rounded-lg bg-accent/5 border border-accent/20 px-3 py-2">
+                      {voiceChat.isGeneratingAudio ? (
+                        <div className="h-3 w-3 animate-spin rounded-full border-2 border-accent/30 border-t-accent" />
+                      ) : (
+                        <div className="flex items-center gap-0.5">
+                          <div className="h-3 w-0.5 animate-pulse bg-accent rounded-full" />
+                          <div className="h-4 w-0.5 animate-pulse bg-accent rounded-full" style={{ animationDelay: "75ms" }} />
+                          <div className="h-2 w-0.5 animate-pulse bg-accent rounded-full" style={{ animationDelay: "150ms" }} />
+                          <div className="h-3.5 w-0.5 animate-pulse bg-accent rounded-full" style={{ animationDelay: "225ms" }} />
+                        </div>
+                      )}
+                      <span className="text-sm text-accent">
+                        {voiceChat.isGeneratingAudio ? "Generating speech..." : "Agent speaking..."}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={voiceChat.stopSpeaking}
+                        className="ml-auto text-xs text-accent hover:text-accent/80"
+                      >
+                        Stop
+                      </button>
+                    </div>
+                  )}
+
                   <div className="flex gap-2">
                     <textarea
                       value={draft}
                       onChange={(e) => setDraft(e.target.value)}
                       onKeyDown={handleDraftKeyDown}
-                      placeholder="Message your agent..."
+                      placeholder={voiceChat.isListening ? "Listening..." : "Message your agent..."}
                       className="input flex-1 resize-none"
                       rows={3}
-                      disabled={isBusy}
+                      disabled={isBusy || voiceChat.isListening}
                     />
                     <div className="flex flex-col gap-2">
                       <button
@@ -398,6 +494,41 @@ export function AgentChatPage() {
                       >
                         Send
                       </button>
+
+                      {/* Mic button for voice input */}
+                      <button
+                        type="button"
+                        onClick={voiceChat.isListening ? voiceChat.stopListening : voiceChat.startListening}
+                        disabled={!voiceChat.isSupported || !voiceChat.voiceAvailable || isBusy}
+                        className={`rounded border px-3 py-1.5 text-sm font-medium transition-all ${
+                          voiceChat.isListening
+                            ? "border-red-300 bg-red-50 text-red-700 hover:bg-red-100"
+                            : voiceChat.voiceAvailable && voiceChat.isSupported
+                              ? "border-surface-3 bg-surface-1 text-ink-1 hover:bg-surface-2 hover:text-ink-0"
+                              : "border-surface-3 bg-surface-1 text-ink-2 opacity-50 cursor-not-allowed"
+                        }`}
+                        title={
+                          !voiceChat.isSupported
+                            ? "Voice not supported in this browser"
+                            : !voiceChat.voiceAvailable
+                              ? "Add ElevenLabs or OpenAI key in Settings to use voice"
+                              : voiceChat.isListening
+                                ? "Stop listening"
+                                : "Talk to agent"
+                        }
+                      >
+                        {voiceChat.isListening ? (
+                          <svg className="mx-auto h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                          </svg>
+                        ) : (
+                          <svg className="mx-auto h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4M12 15a3 3 0 003-3V5a3 3 0 00-6 0v7a3 3 0 003 3z" />
+                          </svg>
+                        )}
+                      </button>
+
                       <button
                         onClick={handleCreateTask}
                         disabled={!draft.trim() || isBusy}
@@ -410,6 +541,7 @@ export function AgentChatPage() {
                   </div>
                   <p className="mt-2 text-xs text-ink-2">
                     Enter = new line, Shift+Enter = send
+                    {voiceChat.voiceAvailable && voiceChat.isSupported && " / Click mic to talk"}
                   </p>
                 </div>
               </>

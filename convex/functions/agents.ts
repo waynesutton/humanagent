@@ -299,6 +299,15 @@ export const update = authedMutation({
         maxAutoReplyHops: v.optional(v.number()),
       })
     ),
+    // Supermemory integration settings
+    supermemoryConfig: v.optional(
+      v.object({
+        enabled: v.boolean(),
+        containerTag: v.string(),
+        syncConversations: v.boolean(),
+        syncTaskResults: v.boolean(),
+      })
+    ),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -328,6 +337,7 @@ export const update = authedMutation({
     if (args.thinking !== undefined) patch.thinking = args.thinking;
     if (args.browserAutomation !== undefined) patch.browserAutomation = args.browserAutomation;
     if (args.a2aConfig !== undefined) patch.a2aConfig = args.a2aConfig;
+    if (args.supermemoryConfig !== undefined) patch.supermemoryConfig = args.supermemoryConfig;
     if (args.xConfig !== undefined) {
       // xAI (Grok) mode is analysis-only: disable any posting/DM capabilities.
       if (args.xConfig.mode === "xai_grok") {

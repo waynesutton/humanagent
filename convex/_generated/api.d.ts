@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as agent_failover from "../agent/failover.js";
 import type * as agent_queries from "../agent/queries.js";
 import type * as agent_runtime from "../agent/runtime.js";
 import type * as agent_security from "../agent/security.js";
@@ -23,10 +24,17 @@ import type * as functions_agentmail from "../functions/agentmail.js";
 import type * as functions_agents from "../functions/agents.js";
 import type * as functions_apiKeys from "../functions/apiKeys.js";
 import type * as functions_auditLog from "../functions/auditLog.js";
+import type * as functions_automations from "../functions/automations.js";
 import type * as functions_board from "../functions/board.js";
+import type * as functions_browserProfiles from "../functions/browserProfiles.js";
+import type * as functions_browserProfilesQueries from "../functions/browserProfilesQueries.js";
+import type * as functions_composio from "../functions/composio.js";
+import type * as functions_composioQueries from "../functions/composioQueries.js";
 import type * as functions_connectedApps from "../functions/connectedApps.js";
 import type * as functions_conversations from "../functions/conversations.js";
 import type * as functions_credentials from "../functions/credentials.js";
+import type * as functions_daytona from "../functions/daytona.js";
+import type * as functions_daytonaQueries from "../functions/daytonaQueries.js";
 import type * as functions_feed from "../functions/feed.js";
 import type * as functions_knowledgeGraph from "../functions/knowledgeGraph.js";
 import type * as functions_llmsTxt from "../functions/llmsTxt.js";
@@ -35,9 +43,12 @@ import type * as functions_permissions from "../functions/permissions.js";
 import type * as functions_rateLimits from "../functions/rateLimits.js";
 import type * as functions_security from "../functions/security.js";
 import type * as functions_skills from "../functions/skills.js";
+import type * as functions_supermemory from "../functions/supermemory.js";
+import type * as functions_supermemoryQueries from "../functions/supermemoryQueries.js";
 import type * as functions_userSchedules from "../functions/userSchedules.js";
 import type * as functions_users from "../functions/users.js";
 import type * as functions_voice from "../functions/voice.js";
+import type * as functions_voiceQueries from "../functions/voiceQueries.js";
 import type * as functions_webhooks from "../functions/webhooks.js";
 import type * as functions_xTwitter from "../functions/xTwitter.js";
 import type * as http from "../http.js";
@@ -51,6 +62,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  "agent/failover": typeof agent_failover;
   "agent/queries": typeof agent_queries;
   "agent/runtime": typeof agent_runtime;
   "agent/security": typeof agent_security;
@@ -66,10 +78,17 @@ declare const fullApi: ApiFromModules<{
   "functions/agents": typeof functions_agents;
   "functions/apiKeys": typeof functions_apiKeys;
   "functions/auditLog": typeof functions_auditLog;
+  "functions/automations": typeof functions_automations;
   "functions/board": typeof functions_board;
+  "functions/browserProfiles": typeof functions_browserProfiles;
+  "functions/browserProfilesQueries": typeof functions_browserProfilesQueries;
+  "functions/composio": typeof functions_composio;
+  "functions/composioQueries": typeof functions_composioQueries;
   "functions/connectedApps": typeof functions_connectedApps;
   "functions/conversations": typeof functions_conversations;
   "functions/credentials": typeof functions_credentials;
+  "functions/daytona": typeof functions_daytona;
+  "functions/daytonaQueries": typeof functions_daytonaQueries;
   "functions/feed": typeof functions_feed;
   "functions/knowledgeGraph": typeof functions_knowledgeGraph;
   "functions/llmsTxt": typeof functions_llmsTxt;
@@ -78,9 +97,12 @@ declare const fullApi: ApiFromModules<{
   "functions/rateLimits": typeof functions_rateLimits;
   "functions/security": typeof functions_security;
   "functions/skills": typeof functions_skills;
+  "functions/supermemory": typeof functions_supermemory;
+  "functions/supermemoryQueries": typeof functions_supermemoryQueries;
   "functions/userSchedules": typeof functions_userSchedules;
   "functions/users": typeof functions_users;
   "functions/voice": typeof functions_voice;
+  "functions/voiceQueries": typeof functions_voiceQueries;
   "functions/webhooks": typeof functions_webhooks;
   "functions/xTwitter": typeof functions_xTwitter;
   http: typeof http;

@@ -9,7 +9,7 @@ interface DateTimePickerProps {
   variant?: "inline" | "field";
 }
 
-const DAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
+const DAYS = ["S", "M", "T", "W", "T", "F", "S"] as const;
 const MONTHS = [
   "January",
   "February",
@@ -23,6 +23,15 @@ const MONTHS = [
   "October",
   "November",
   "December",
+] as const;
+
+const QUICK_TIMES = [
+  { label: "9:00 AM", hour: 9, minute: 0 },
+  { label: "12:00 PM", hour: 12, minute: 0 },
+  { label: "3:00 PM", hour: 15, minute: 0 },
+  { label: "5:00 PM", hour: 17, minute: 0 },
+  { label: "6:00 PM", hour: 18, minute: 0 },
+  { label: "9:00 PM", hour: 21, minute: 0 },
 ] as const;
 
 function pad(n: number): string {
@@ -50,8 +59,8 @@ function parseDateTimeValue(value: string): {
       year: now.getFullYear(),
       month: now.getMonth(),
       day: now.getDate(),
-      hour: now.getHours(),
-      minute: now.getMinutes(),
+      hour: 12,
+      minute: 0,
     };
   }
   const [datePart, timePart] = value.split("T");
@@ -66,6 +75,14 @@ function formatDisplay(value: string): string {
   const h = hour % 12 || 12;
   const ampm = hour >= 12 ? "PM" : "AM";
   return `${MONTHS[month].slice(0, 3)} ${day}, ${year} at ${h}:${pad(minute)} ${ampm}`;
+}
+
+function formatShortDisplay(value: string): string {
+  if (!value) return "";
+  const { month, day, hour, minute } = parseDateTimeValue(value);
+  const h = hour % 12 || 12;
+  const ampm = hour >= 12 ? "PM" : "AM";
+  return `${MONTHS[month].slice(0, 3)} ${day}, ${h}:${pad(minute)} ${ampm}`;
 }
 
 function toDateTimeLocal(
@@ -93,7 +110,6 @@ export function DateTimePicker({
   const [viewMonth, setViewMonth] = useState(parsed.month);
   const [selectedHour, setSelectedHour] = useState(parsed.hour);
   const [selectedMinute, setSelectedMinute] = useState(parsed.minute);
-  const [isPM, setIsPM] = useState(parsed.hour >= 12);
 
   useEffect(() => {
     if (value) {
@@ -102,7 +118,6 @@ export function DateTimePicker({
       setViewMonth(p.month);
       setSelectedHour(p.hour);
       setSelectedMinute(p.minute);
-      setIsPM(p.hour >= 12);
     }
   }, [value]);
 
@@ -123,14 +138,12 @@ export function DateTimePicker({
     onChange(toDateTimeLocal(viewYear, viewMonth, day, selectedHour, selectedMinute));
   };
 
-  const updateTime = (hour: number, minute: number, pm: boolean) => {
-    const h24 = pm ? (hour === 12 ? 12 : hour + 12) : hour === 12 ? 0 : hour;
-    setSelectedHour(h24);
+  const selectTime = (hour: number, minute: number) => {
+    setSelectedHour(hour);
     setSelectedMinute(minute);
-    setIsPM(pm);
     if (value) {
       const p = parseDateTimeValue(value);
-      onChange(toDateTimeLocal(p.year, p.month, p.day, h24, minute));
+      onChange(toDateTimeLocal(p.year, p.month, p.day, hour, minute));
     }
   };
 
@@ -172,15 +185,32 @@ export function DateTimePicker({
     );
   };
 
+  const setTomorrow = () => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    setViewYear(tomorrow.getFullYear());
+    setViewMonth(tomorrow.getMonth());
+    onChange(
+      toDateTimeLocal(
+        tomorrow.getFullYear(),
+        tomorrow.getMonth(),
+        tomorrow.getDate(),
+        selectedHour,
+        selectedMinute,
+      ),
+    );
+  };
+
   const daysInMonth = getDaysInMonth(viewYear, viewMonth);
   const firstDay = getFirstDayOfMonth(viewYear, viewMonth);
   const selectedDay = value ? parseDateTimeValue(value).day : -1;
   const selectedMonth = value ? parseDateTimeValue(value).month : -1;
   const selectedYear = value ? parseDateTimeValue(value).year : -1;
 
-  const display12Hour = selectedHour % 12 || 12;
-
   const isField = variant === "field";
+
+  const todayDate = new Date();
+  const isCurrentMonth = viewMonth === todayDate.getMonth() && viewYear === todayDate.getFullYear();
 
   return (
     <div ref={ref} className={`relative ${className}`}>
@@ -191,201 +221,198 @@ export function DateTimePicker({
         className={
           isField
             ? "input mt-1.5 flex w-full items-center gap-2 text-left"
-            : "flex cursor-pointer items-center gap-1.5 border border-surface-3 bg-surface-1 px-3 py-1 text-xs text-ink-1 outline-none hover:bg-surface-2"
+            : `flex cursor-pointer items-center gap-1.5 rounded-full border border-surface-3 bg-surface-1 px-3 py-1 text-xs outline-none transition-colors hover:bg-surface-2 ${value ? "text-ink-0" : "text-ink-2"}`
         }
         title={title}
       >
         <svg
-          className={`${isField ? "h-4 w-4" : "h-3 w-3"} shrink-0 text-ink-2`}
+          className={`${isField ? "h-4 w-4" : "h-3.5 w-3.5"} shrink-0`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
-          strokeWidth={2}
+          strokeWidth={1.5}
         >
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
-            d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+            d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5"
           />
         </svg>
-        <span className={value ? "text-ink-0" : "text-ink-2"}>
-          {value ? formatDisplay(value) : placeholder}
+        <span>
+          {value ? formatShortDisplay(value) : placeholder}
         </span>
+        {value && !isField && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              clearValue();
+            }}
+            className="ml-0.5 rounded-full p-0.5 hover:bg-surface-3"
+            aria-label="Clear date"
+          >
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
       </button>
 
       {/* Dropdown */}
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 border border-surface-3 bg-surface-0 shadow-elevated animate-in fade-in slide-in-from-top-1">
-          <div className="flex">
-            {/* Calendar side */}
-            <div className="w-[260px] border-r border-surface-3 p-3">
-              {/* Month/year nav */}
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-sm font-medium text-ink-0">
-                  {MONTHS[viewMonth]} {viewYear}
-                </span>
-                <div className="flex gap-1">
-                  <button
-                    type="button"
-                    onClick={prevMonth}
-                    className="p-1 text-ink-2 hover:bg-surface-2 hover:text-ink-0"
-                  >
-                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={nextMonth}
-                    className="p-1 text-ink-2 hover:bg-surface-2 hover:text-ink-0"
-                  >
-                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-                </div>
+        <div className="absolute left-0 top-full z-50 mt-2 w-[280px] rounded-xl border border-surface-3 bg-surface-0 p-4 shadow-lg">
+          {/* Quick date buttons */}
+          <div className="mb-3 flex gap-2">
+            <button
+              type="button"
+              onClick={setToday}
+              className="flex-1 rounded-lg border border-surface-3 px-3 py-1.5 text-xs font-medium text-ink-0 transition-colors hover:bg-surface-1"
+            >
+              Today
+            </button>
+            <button
+              type="button"
+              onClick={setTomorrow}
+              className="flex-1 rounded-lg border border-surface-3 px-3 py-1.5 text-xs font-medium text-ink-0 transition-colors hover:bg-surface-1"
+            >
+              Tomorrow
+            </button>
+          </div>
+
+          {/* Month/year nav */}
+          <div className="mb-3 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={prevMonth}
+              className="rounded-lg p-1.5 text-ink-2 transition-colors hover:bg-surface-1 hover:text-ink-0"
+              aria-label="Previous month"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <span className="text-sm font-medium text-ink-0">
+              {MONTHS[viewMonth]} {viewYear}
+            </span>
+            <button
+              type="button"
+              onClick={nextMonth}
+              className="rounded-lg p-1.5 text-ink-2 transition-colors hover:bg-surface-1 hover:text-ink-0"
+              aria-label="Next month"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Day labels */}
+          <div className="mb-1 grid grid-cols-7 gap-0">
+            {DAYS.map((d, i) => (
+              <div
+                key={`${d}-${i}`}
+                className="flex h-8 items-center justify-center text-xs font-medium text-ink-2"
+              >
+                {d}
               </div>
+            ))}
+          </div>
 
-              {/* Day labels */}
-              <div className="grid grid-cols-7 gap-0">
-                {DAYS.map((d) => (
-                  <div
-                    key={d}
-                    className="flex h-8 items-center justify-center text-[11px] font-medium text-ink-2"
-                  >
-                    {d}
-                  </div>
-                ))}
+          {/* Day grid */}
+          <div className="grid grid-cols-7 gap-0">
+            {/* Empty cells before first day */}
+            {Array.from({ length: firstDay }, (_, i) => (
+              <div key={`empty-${i}`} className="h-8" />
+            ))}
 
-                {/* Empty cells before first day */}
-                {Array.from({ length: firstDay }, (_, i) => (
-                  <div key={`empty-${i}`} className="h-8" />
-                ))}
+            {/* Day cells */}
+            {Array.from({ length: daysInMonth }, (_, i) => {
+              const day = i + 1;
+              const isSelected =
+                day === selectedDay &&
+                viewMonth === selectedMonth &&
+                viewYear === selectedYear;
+              const isToday = isCurrentMonth && day === todayDate.getDate();
+              const isPast = 
+                viewYear < todayDate.getFullYear() ||
+                (viewYear === todayDate.getFullYear() && viewMonth < todayDate.getMonth()) ||
+                (isCurrentMonth && day < todayDate.getDate());
 
-                {/* Day cells */}
-                {Array.from({ length: daysInMonth }, (_, i) => {
-                  const day = i + 1;
-                  const isSelected =
-                    day === selectedDay &&
-                    viewMonth === selectedMonth &&
-                    viewYear === selectedYear;
-                  const isToday =
-                    day === new Date().getDate() &&
-                    viewMonth === new Date().getMonth() &&
-                    viewYear === new Date().getFullYear();
-
-                  return (
-                    <button
-                      key={day}
-                      type="button"
-                      onClick={() => selectDay(day)}
-                      className={`flex h-8 w-full items-center justify-center text-xs transition-colors ${
-                        isSelected
-                          ? "bg-accent font-semibold text-white"
-                          : isToday
-                            ? "border border-accent text-accent"
-                            : "text-ink-0 hover:bg-surface-2"
-                      }`}
-                    >
-                      {day}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Footer actions */}
-              <div className="mt-2 flex items-center justify-between border-t border-surface-3 pt-2">
+              return (
                 <button
+                  key={day}
                   type="button"
-                  onClick={clearValue}
-                  className="text-xs text-ink-2 hover:text-ink-0"
+                  onClick={() => selectDay(day)}
+                  className={`flex h-8 w-full items-center justify-center rounded-lg text-sm transition-colors ${
+                    isSelected
+                      ? "bg-ink-0 font-medium text-surface-0"
+                      : isToday
+                        ? "font-medium text-ink-0 ring-1 ring-inset ring-ink-0"
+                        : isPast
+                          ? "text-ink-2 hover:bg-surface-1"
+                          : "text-ink-0 hover:bg-surface-1"
+                  }`}
                 >
-                  Clear
+                  {day}
                 </button>
-                <button
-                  type="button"
-                  onClick={setToday}
-                  className="text-xs text-accent hover:text-accent-hover"
-                >
-                  Today
-                </button>
-              </div>
+              );
+            })}
+          </div>
+
+          {/* Divider */}
+          <div className="my-3 border-t border-surface-3" />
+
+          {/* Time selection */}
+          <div>
+            <p className="mb-2 text-xs font-medium text-ink-2">Time</p>
+            <div className="grid grid-cols-3 gap-1.5">
+              {QUICK_TIMES.map((t) => {
+                const isActive = selectedHour === t.hour && selectedMinute === t.minute;
+                return (
+                  <button
+                    key={t.label}
+                    type="button"
+                    onClick={() => selectTime(t.hour, t.minute)}
+                    className={`rounded-lg px-2 py-1.5 text-xs font-medium transition-colors ${
+                      isActive
+                        ? "bg-ink-0 text-surface-0"
+                        : "bg-surface-1 text-ink-1 hover:bg-surface-2 hover:text-ink-0"
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
             </div>
 
-            {/* Time side */}
-            <div className="flex w-[140px] flex-col">
-              <div className="flex flex-1">
-                {/* Hour column */}
-                <div className="flex-1 overflow-y-auto border-r border-surface-3 scrollbar-hide" style={{ maxHeight: 280 }}>
-                  {Array.from({ length: 12 }, (_, i) => {
-                    const h = i === 0 ? 12 : i;
-                    const isActive = display12Hour === h;
-                    return (
-                      <button
-                        key={h}
-                        type="button"
-                        onClick={() => updateTime(h, selectedMinute, isPM)}
-                        className={`flex h-8 w-full items-center justify-center text-xs transition-colors ${
-                          isActive
-                            ? "bg-accent font-semibold text-white"
-                            : "text-ink-0 hover:bg-surface-2"
-                        }`}
-                      >
-                        {pad(h)}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Minute column */}
-                <div className="flex-1 overflow-y-auto border-r border-surface-3 scrollbar-hide" style={{ maxHeight: 280 }}>
-                  {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((m) => {
-                    const isActive = selectedMinute === m;
-                    return (
-                      <button
-                        key={m}
-                        type="button"
-                        onClick={() => updateTime(display12Hour, m, isPM)}
-                        className={`flex h-8 w-full items-center justify-center text-xs transition-colors ${
-                          isActive
-                            ? "bg-accent font-semibold text-white"
-                            : "text-ink-0 hover:bg-surface-2"
-                        }`}
-                      >
-                        {pad(m)}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* AM/PM column */}
-                <div className="flex w-10 flex-col">
-                  <button
-                    type="button"
-                    onClick={() => updateTime(display12Hour, selectedMinute, false)}
-                    className={`flex h-8 w-full items-center justify-center text-xs transition-colors ${
-                      !isPM
-                        ? "bg-accent font-semibold text-white"
-                        : "text-ink-0 hover:bg-surface-2"
-                    }`}
-                  >
-                    AM
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateTime(display12Hour, selectedMinute, true)}
-                    className={`flex h-8 w-full items-center justify-center text-xs transition-colors ${
-                      isPM
-                        ? "bg-accent font-semibold text-white"
-                        : "text-ink-0 hover:bg-surface-2"
-                    }`}
-                  >
-                    PM
-                  </button>
-                </div>
-              </div>
+            {/* Custom time input */}
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="time"
+                value={`${pad(selectedHour)}:${pad(selectedMinute)}`}
+                onChange={(e) => {
+                  const [h, m] = e.target.value.split(":").map(Number);
+                  if (!isNaN(h) && !isNaN(m)) {
+                    selectTime(h, m);
+                  }
+                }}
+                className="flex-1 rounded-lg border border-surface-3 bg-surface-1 px-3 py-1.5 text-sm text-ink-0 outline-none focus:border-ink-2"
+              />
             </div>
           </div>
+
+          {/* Footer */}
+          {isField && value && (
+            <div className="mt-3 flex justify-end border-t border-surface-3 pt-3">
+              <button
+                type="button"
+                onClick={clearValue}
+                className="text-xs text-ink-2 hover:text-ink-0"
+              >
+                Clear
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
