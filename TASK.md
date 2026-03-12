@@ -2,7 +2,7 @@
 
 Active development tasks and roadmap items.
 
-Session updates complete on 2026-03-05. Last updated 2026-03-05.
+Session updates complete on 2026-03-11. Last updated 2026-03-11.
 
 ## In Progress
 
@@ -40,6 +40,10 @@ Session updates complete on 2026-03-05. Last updated 2026-03-05.
 - [ ] Performance dashboard and agent metrics reports
 - [x] Validate agent auto-task processing: confirm auto/cron agents pick up pending tasks via `processAgentTasks` and move them through board columns end to end
 - [ ] Add "Set target date" quick action on in-progress task cards when ETA is unknown
+
+## To Do
+
+- [ ] Verify existing single-agent flows still work
 
 ## Up Next
 
@@ -92,6 +96,42 @@ Session updates complete on 2026-03-05. Last updated 2026-03-05.
 
 ## Completed
 
+- [x] Add first class `run_symphony` automation adapter (2026-03-11)
+  - [x] Added PRD `prds/symphony-automation-adapter.md` covering the control-plane adapter, run-state consistency, and verification plan
+  - [x] Extended automation definitions to support `run_symphony` alongside `process_agent_tasks`
+  - [x] Added shared automation dispatch paths so manual runs and the cron control plane use the same Symphony-capable adapter logic and consistent run status updates
+  - [x] Added `runSymphonyAutomation` bridge action for repo-aware automation launches using the existing Symphony credential plus per-agent backend config
+  - [x] Validation: `npx convex codegen` succeeded, targeted ESLint passed for changed Convex files, and remaining `npm run typecheck` failures are pre-existing repo issues outside this feature scope
+- [x] Add Symphony as an optional execution backend without replacing the main runtime (2026-03-11)
+  - [x] Added PRD `prds/symphony-execution-backend.md` covering the bridge-based integration plan, risks, and verification
+  - [x] Added schema support for per-agent `executionBackend` config and `symphony` BYOK credentials
+  - [x] Updated `convex/functions/daytonaQueries.ts` and `convex/functions/daytona.ts` so code and command execution wrappers can resolve the agent backend and route to either Daytona or a Symphony bridge while preserving the existing result shape
+  - [x] Updated `convex/functions/agents.ts`, `src/pages/AgentsPage.tsx`, `src/pages/SettingsPage.tsx`, and `src/lib/platformApi.ts` so Symphony can be configured explicitly per agent and per user without changing current defaults
+  - [x] Validation: `ReadLints` reported no issues in changed files, `npx convex codegen` succeeded, and remaining `npm run typecheck` and `npm run lint` failures are pre-existing repo issues outside this feature scope
+- [x] Agent teams MVP with autonomous coordination (2026-03-11)
+  - [x] Added PRD `prds/agent-teams-autonomy.md` covering the team model, team autonomy modes, shared skills, and verification plan
+  - [x] Added schema support for `agentTeams`, `agentTeamMembers`, `teamSkills`, plus `tasks.teamId` and `tasks.delegatedByAgentId`
+  - [x] Added `convex/functions/teams.ts` with team CRUD, member and skill assignment, team overview queries, and `processTeamTasks` for auto-mode coordination
+  - [x] Updated `convex/functions/board.ts` so tasks can be assigned to either an agent or a team, with auto-scheduling when a team is in auto mode
+  - [x] Updated `convex/agent/queries.ts` and `convex/agent/runtime.ts` so lead agents receive team context, inherit shared skills, and can delegate subtasks to teammates by slug
+  - [x] Added `src/pages/TeamsPage.tsx`, wired `/teams` into routing and navigation, and surfaced team assignment and team overview in board and automation flows
+  - [x] Validation: changed files are lint clean, and remaining TypeScript failures are pre-existing repo issues outside the team feature scope
+- [x] Chat-driven agent bootstrap in `/chat` (2026-03-11)
+  - [x] Added PRD `prds/chat-agent-bootstrap.md` for the zero-agent bootstrap flow, slash commands, and verification plan
+  - [x] Added inline guided setup in `src/pages/AgentChatPage.tsx` for zero-agent chat with A, B, C, D quick picks and custom typed answers
+  - [x] Added `/new`, `/agent <name>`, `/help`, and `/cancel` command handling without replacing the existing Convex conversation model
+  - [x] Added inline `/agent <name>` suggestions so partial commands like `/agent r` surface matching agents before submit
+  - [x] Added keyboard navigation for `/agent` suggestions so arrow keys move through matches and Enter opens the highlighted agent
+  - [x] Reused `agents.create`, `conversations.startAgentChat`, and `conversations.sendDashboardMessage` so newly created agents land in the normal 1:1 chat flow
+  - [x] Aligned chat startup with the current default agent and kept task creation plus voice chat behavior intact outside setup mode
+  - [x] Validation: `ReadLints` found no issues in `src/pages/AgentChatPage.tsx`; `npm run typecheck` still reports pre-existing repo errors outside this change scope
+- [x] Reorganize dashboard navigation into tiered layout (2026-03-11)
+  - [x] Split 10 flat nav items into primary bar (Dashboard, Agents, Teams, Skills, Inbox, Chat, Board, Settings) and secondary "More" dropdown (Automation, Activity)
+  - [x] Added desktop "More" dropdown with click-outside dismiss and active-state highlight when on a secondary page
+  - [x] Rebuilt mobile bottom bar: 4 primary items (Dashboard, Agents, Teams, Skills) plus "More" popup for remaining items
+  - [x] Mobile "More" popup includes Settings, Inbox, Chat, Board, Automation, Activity with active state
+  - [x] Admin kept in profile dropdown only (unchanged)
+  - [x] All routes and pages unchanged, no functionality removed
 - [x] Automation control plane foundation and dispatcher (2026-03-05)
   - [x] Added PRD `prds/automation-control-plane.md` documenting problem, architecture, scope, and verification
   - [x] Added schema tables `automationDefinitions` and `automationRuns` with scheduling and observability indexes

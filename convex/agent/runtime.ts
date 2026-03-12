@@ -654,6 +654,7 @@ type CreateSubtaskAction = {
   parentTaskId: string;
   description: string;
   isPublic?: boolean;
+  targetAgentSlug?: string;
 };
 
 type DelegateToAgentAction = {
@@ -938,11 +939,14 @@ function parseAgentActions(rawResponse: string): {
         const parentTaskId = typeof candidate.parentTaskId === "string" ? candidate.parentTaskId.trim() : "";
         const description = typeof candidate.description === "string" ? candidate.description.trim() : "";
         if (!parentTaskId || !description) continue;
+        const targetAgentSlug =
+          typeof candidate.targetAgentSlug === "string" ? candidate.targetAgentSlug.trim() : "";
         actions.push({
           type: "create_subtask",
           parentTaskId,
           description: description.slice(0, 800),
           isPublic: candidate.isPublic === true,
+          targetAgentSlug: targetAgentSlug || undefined,
         });
       } else if (type === "delegate_to_agent") {
         const targetAgentSlug = typeof candidate.targetAgentSlug === "string" ? candidate.targetAgentSlug.trim() : "";
@@ -1171,6 +1175,7 @@ export const processMessage = internalAction({
   args: {
     userId: v.id("users"),
     agentId: v.optional(v.id("agents")),
+    teamId: v.optional(v.id("agentTeams")),
     message: v.string(),
     channel: v.union(
       v.literal("email"),
@@ -1244,6 +1249,7 @@ export const processMessage = internalAction({
     } | null = await ctx.runQuery(internal.agent.queries.getAgentConfig, {
       userId: args.userId,
       agentId: args.agentId,
+      teamId: args.teamId,
     });
 
     if (!config) {
@@ -1584,13 +1590,26 @@ export const processMessage = internalAction({
             isActive: action.isActive,
           });
         } else if (action.type === "create_subtask") {
+          let targetAgentId = args.agentId;
+          if (action.targetAgentSlug) {
+            const targetAgent = await ctx.runQuery(internal.agent.queries.getAgentBySlug, {
+              userId: args.userId,
+              slug: action.targetAgentSlug,
+            });
+            targetAgentId = targetAgent?._id as Id<"agents"> | undefined;
+          }
           await ctx.runMutation(internal.functions.board.createTaskFromAgent, {
             userId: args.userId,
-            agentId: args.agentId,
+            agentId: targetAgentId,
             description: action.description,
             isPublic: action.isPublic ?? false,
             source: args.channel,
             parentTaskId: action.parentTaskId as Id<"tasks">,
+            teamId: args.teamId,
+            delegatedByAgentId:
+              action.targetAgentSlug && args.agentId && targetAgentId !== args.agentId
+                ? args.agentId
+                : undefined,
           });
         } else if (action.type === "delegate_to_agent") {
           // Look up target agent by slug within the same user's agents

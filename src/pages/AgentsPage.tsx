@@ -195,6 +195,14 @@ export function AgentsPage() {
   const [editFirecrawlEnabled, setEditFirecrawlEnabled] = useState(false);
   const [editStagehandEnabled, setEditStagehandEnabled] = useState(false);
   const [editBrowserUseEnabled, setEditBrowserUseEnabled] = useState(false);
+  // Code execution backend
+  const [editExecutionBackendProvider, setEditExecutionBackendProvider] = useState<
+    "daytona" | "symphony"
+  >("daytona");
+  const [editExecutionRepoUrl, setEditExecutionRepoUrl] = useState("");
+  const [editExecutionBaseBranch, setEditExecutionBaseBranch] = useState("");
+  const [editExecutionProjectPath, setEditExecutionProjectPath] = useState("");
+  const [editExecutionPromptPrefix, setEditExecutionPromptPrefix] = useState("");
   // Supermemory integration
   const [editSupermemoryEnabled, setEditSupermemoryEnabled] = useState(false);
   const [editSupermemoryContainerTag, setEditSupermemoryContainerTag] = useState("");
@@ -282,6 +290,8 @@ export function AgentsPage() {
   const hasFirecrawlKey = credentials?.firecrawl?.configured ?? false;
   const hasBrowserbaseKey = credentials?.browserbase?.configured ?? false;
   const hasBrowserUseKey = credentials?.browser_use?.configured ?? false;
+  const hasDaytonaKey = credentials?.daytona?.configured ?? false;
+  const hasSymphonyKey = credentials?.symphony?.configured ?? false;
   const hasSupermemoryKey = credentials?.supermemory?.configured ?? false;
   const hasXaiKey = credentials?.xai?.configured ?? false;
   const hasTwitterKey = credentials?.twitter?.configured ?? false;
@@ -453,6 +463,20 @@ export function AgentsPage() {
     setEditFirecrawlEnabled(browserAutomation?.firecrawlEnabled ?? false);
     setEditStagehandEnabled(browserAutomation?.stagehandEnabled ?? false);
     setEditBrowserUseEnabled(browserAutomation?.browserUseEnabled ?? false);
+    const executionBackend = (agent as {
+      executionBackend?: {
+        provider?: "daytona" | "symphony";
+        repoUrl?: string;
+        baseBranch?: string;
+        projectPath?: string;
+        promptPrefix?: string;
+      };
+    }).executionBackend;
+    setEditExecutionBackendProvider(executionBackend?.provider ?? "daytona");
+    setEditExecutionRepoUrl(executionBackend?.repoUrl || "");
+    setEditExecutionBaseBranch(executionBackend?.baseBranch || "");
+    setEditExecutionProjectPath(executionBackend?.projectPath || "");
+    setEditExecutionPromptPrefix(executionBackend?.promptPrefix || "");
     // Supermemory config
     const supermemoryConfig = (agent as { supermemoryConfig?: { enabled?: boolean; containerTag?: string; syncConversations?: boolean; syncTaskResults?: boolean } }).supermemoryConfig;
     setEditSupermemoryEnabled(supermemoryConfig?.enabled ?? false);
@@ -477,6 +501,10 @@ export function AgentsPage() {
 
   async function handleSaveAgent() {
     if (!editingAgent) return;
+    if (editExecutionBackendProvider === "symphony" && !editExecutionRepoUrl.trim()) {
+      notify.warning("Repo URL required", "Add a repository URL before enabling Symphony.");
+      return;
+    }
     setSaving(true);
     try {
       await updateAgent({
@@ -545,6 +573,13 @@ export function AgentsPage() {
           firecrawlEnabled: editFirecrawlEnabled,
           stagehandEnabled: editStagehandEnabled,
           browserUseEnabled: editBrowserUseEnabled,
+        },
+        executionBackend: {
+          provider: editExecutionBackendProvider,
+          repoUrl: editExecutionRepoUrl.trim() || undefined,
+          baseBranch: editExecutionBaseBranch.trim() || undefined,
+          projectPath: editExecutionProjectPath.trim() || undefined,
+          promptPrefix: editExecutionPromptPrefix.trim() || undefined,
         },
         // Supermemory settings
         supermemoryConfig: {
@@ -1521,6 +1556,103 @@ export function AgentsPage() {
                               <span className="text-xs text-amber-500">Configure Browser Use in Settings</span>
                             )}
                           </label>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 rounded-lg border border-surface-3 bg-surface-1 p-4">
+                        <h4 className="text-sm font-medium text-ink-0">Code Execution Backend</h4>
+                        <p className="mt-1 text-xs text-ink-2">
+                          Keep Daytona as the default. Only switch to Symphony for repo-aware
+                          implementation runs via your configured bridge.
+                        </p>
+                        <div className="mt-3 space-y-3">
+                          <div>
+                            <label className="block text-sm text-ink-1">Backend</label>
+                            <select
+                              value={editExecutionBackendProvider}
+                              onChange={(e) =>
+                                setEditExecutionBackendProvider(
+                                  e.target.value as "daytona" | "symphony"
+                                )
+                              }
+                              className="input mt-1"
+                            >
+                              <option value="daytona" disabled={!hasDaytonaKey}>
+                                Daytona sandbox execution
+                              </option>
+                              <option value="symphony" disabled={!hasSymphonyKey}>
+                                Symphony bridge execution
+                              </option>
+                            </select>
+                            {editExecutionBackendProvider === "daytona" && !hasDaytonaKey && (
+                              <p className="mt-1 text-xs text-amber-500">
+                                Configure Daytona in Settings to keep code execution enabled.
+                              </p>
+                            )}
+                            {editExecutionBackendProvider === "symphony" && !hasSymphonyKey && (
+                              <p className="mt-1 text-xs text-amber-500">
+                                Configure a Symphony bridge token and URL in Settings first.
+                              </p>
+                            )}
+                          </div>
+
+                          {editExecutionBackendProvider === "symphony" && (
+                            <div className="space-y-3">
+                              <div>
+                                <label className="block text-sm text-ink-1">Repo URL</label>
+                                <input
+                                  type="url"
+                                  value={editExecutionRepoUrl}
+                                  onChange={(e) => setEditExecutionRepoUrl(e.target.value)}
+                                  className="input mt-1"
+                                  placeholder="https://github.com/owner/repo"
+                                />
+                              </div>
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                <div>
+                                  <label className="block text-sm text-ink-1">
+                                    Base branch
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={editExecutionBaseBranch}
+                                    onChange={(e) =>
+                                      setEditExecutionBaseBranch(e.target.value)
+                                    }
+                                    className="input mt-1"
+                                    placeholder="main"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-sm text-ink-1">
+                                    Project path
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={editExecutionProjectPath}
+                                    onChange={(e) =>
+                                      setEditExecutionProjectPath(e.target.value)
+                                    }
+                                    className="input mt-1"
+                                    placeholder="apps/web"
+                                  />
+                                </div>
+                              </div>
+                              <div>
+                                <label className="block text-sm text-ink-1">
+                                  Prompt prefix
+                                </label>
+                                <textarea
+                                  value={editExecutionPromptPrefix}
+                                  onChange={(e) =>
+                                    setEditExecutionPromptPrefix(e.target.value)
+                                  }
+                                  className="input mt-1 min-h-[96px]"
+                                  placeholder="Optional extra instructions sent to your Symphony bridge before code or command execution."
+                                />
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
 

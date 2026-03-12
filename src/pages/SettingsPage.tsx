@@ -2387,6 +2387,24 @@ export function SettingsPage() {
                                 placeholder={`Enter your ${service.name} API key`}
                               />
                             </div>
+                            {service.id === "symphony" && (
+                              <div>
+                                <label className="block text-xs font-medium text-ink-1">
+                                  Bridge URL
+                                </label>
+                                <input
+                                  type="url"
+                                  value={byokBaseUrl}
+                                  onChange={(e) => setByokBaseUrl(e.target.value)}
+                                  className="input mt-1 text-sm"
+                                  placeholder="https://your-symphony-bridge.example.com"
+                                />
+                                <p className="mt-1 text-xs text-ink-2">
+                                  HumanAgent calls your Symphony bridge at `/execute/code` and
+                                  `/execute/command` using this base URL.
+                                </p>
+                              </div>
+                            )}
                             {service.id === "daytona" && (
                               <div className="space-y-1">
                                 <p className="text-xs text-ink-2">
@@ -2397,11 +2415,27 @@ export function SettingsPage() {
                                 </p>
                               </div>
                             )}
+                            {service.id === "symphony" && (
+                              <div className="space-y-1">
+                                <p className="text-xs text-ink-2">
+                                  Use a bridge service that wraps your Symphony deployment and
+                                  accepts authenticated POST requests from HumanAgent.
+                                </p>
+                                <p className="text-xs text-ink-2">
+                                  Keep Daytona as the default unless this agent should route code
+                                  and command execution into a repo-aware implementation runner.
+                                </p>
+                              </div>
+                            )}
                           </div>
                           <div className="mt-3 flex gap-2">
                             <button
                               onClick={() => handleSaveByok(service.id)}
-                              disabled={savingByok || !byokApiKey.trim()}
+                              disabled={
+                                savingByok ||
+                                !byokApiKey.trim() ||
+                                (service.id === "symphony" && !byokBaseUrl.trim())
+                              }
                               className="btn-accent text-sm"
                             >
                               {savingByok ? "Saving..." : "Save key"}

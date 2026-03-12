@@ -105,6 +105,7 @@ export const getAgentConfig = internalQuery({
   args: {
     userId: v.id("users"),
     agentId: v.optional(v.id("agents")),
+    teamId: v.optional(v.id("agentTeams")),
   },
   returns: v.union(
     v.object({
@@ -123,6 +124,7 @@ export const getAgentConfig = internalQuery({
     let llmConfig = user.llmConfig;
     let agentName = user.name ?? "Agent";
     let customInstructions: string | undefined;
+    let teamContextText = "";
 
     // Override with agent-specific config if provided
     if (args.agentId) {
@@ -134,27 +136,96 @@ export const getAgentConfig = internalQuery({
       customInstructions = agent?.personality?.customInstructions;
     }
 
-    // Get active skills for capabilities (filter by isActive in code since it's optional)
-    const allSkills = await ctx.db
-      .query("skills")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .take(50);
-    
-    // Filter to active skills only (default to true if isActive is undefined)
-    const skills = allSkills.filter((s) => s.isActive !== false).slice(0, 10);
+    const teamId = args.teamId;
+    if (teamId) {
+      const team = await ctx.db.get(teamId);
+      if (team && team.userId === args.userId) {
+        const members = await ctx.db
+          .query("agentTeamMembers")
+          .withIndex("by_teamId", (q) => q.eq("teamId", teamId))
+          .take(50);
+        const memberAgents = await Promise.all(
+          members.map((membership) => ctx.db.get(membership.agentId))
+        );
+        const memberLines = memberAgents
+          .filter((member): member is NonNullable<typeof member> => !!member)
+          .map((member) => `${member.name} (slug: ${member.slug})`);
+        teamContextText =
+          `\n\nYou are working as part of the team "${team.name}".` +
+          (team.description ? ` Team brief: ${team.description}` : "") +
+          ` Lead agent id: ${String(team.leadAgentId)}.` +
+          ` Team autonomy: execution=${team.autonomy.executionMode}, coordination=${team.autonomy.coordinationMode}, thinking=${team.autonomy.thinkingEnabled ? "enabled" : "disabled"}, autoTaskCreation=${team.autonomy.allowAutonomousTaskCreation ? "enabled" : "disabled"}, emailReports=${team.autonomy.allowEmailReports ? "enabled" : "disabled"}.` +
+          (memberLines.length > 0
+            ? ` Team members available for collaboration: ${memberLines.join(", ")}.`
+            : "");
+      }
+    }
+
+    const skillMap = new Map<string, any>();
+
+    const agentId = args.agentId;
+    if (agentId) {
+      const assignments = await ctx.db
+        .query("skillAgents")
+        .withIndex("by_agentId", (q) => q.eq("agentId", agentId))
+        .take(50);
+      const assignedSkills = await Promise.all(assignments.map((row) => ctx.db.get(row.skillId)));
+      for (const skill of assignedSkills) {
+        if (skill && skill.userId === args.userId) {
+          skillMap.set(String(skill._id), skill);
+        }
+      }
+
+      const legacySkills = await ctx.db
+        .query("skills")
+        .withIndex("by_agentId", (q) => q.eq("agentId", agentId))
+        .take(50);
+      for (const skill of legacySkills) {
+        if (skill.userId === args.userId) {
+          skillMap.set(String(skill._id), skill);
+        }
+      }
+    }
+
+    if (teamId) {
+      const teamSkillRows = await ctx.db
+        .query("teamSkills")
+        .withIndex("by_teamId", (q) => q.eq("teamId", teamId))
+        .take(50);
+      const teamSkills = await Promise.all(teamSkillRows.map((row) => ctx.db.get(row.skillId)));
+      for (const skill of teamSkills) {
+        if (skill && skill.userId === args.userId) {
+          skillMap.set(String(skill._id), skill);
+        }
+      }
+    }
+
+    if (!agentId && !teamId) {
+      const allSkills = await ctx.db
+        .query("skills")
+        .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+        .take(50);
+      for (const skill of allSkills) {
+        skillMap.set(String(skill._id), skill);
+      }
+    }
+
+    const skills = Array.from(skillMap.values())
+      .filter((skill) => skill.isActive !== false)
+      .slice(0, 20);
 
     const capabilities: string[] = [];
     const restrictions: string[] = [];
 
     for (const skill of skills) {
-      // Filter by agent if specified
-      if (args.agentId && skill.agentId && skill.agentId !== args.agentId) {
-        continue;
-      }
       for (const cap of skill.capabilities) {
         capabilities.push(`${cap.name}: ${cap.description}`);
       }
     }
+
+    const combinedInstructions = [customInstructions, teamContextText.trim()]
+      .filter(Boolean)
+      .join("\n\n");
 
     // Build system prompt
     const systemPrompt = buildSystemPrompt(
@@ -164,7 +235,7 @@ export const getAgentConfig = internalQuery({
         ? capabilities
         : ["General assistance", "Answer questions", "Help with tasks"],
       restrictions,
-      customInstructions
+      combinedInstructions || undefined
     );
 
     return {

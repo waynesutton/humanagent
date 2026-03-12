@@ -5,8 +5,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Automation control plane dispatch now supports a first class Symphony path and uses shared manual plus scheduled run bookkeeping so `automationRuns` move through consistent statuses instead of leaving manual runs stranded in `queued`.
+- Agent code execution can now route through an explicit per-agent backend selection while keeping existing Daytona behavior as the safe default. Agents only use Symphony when they are explicitly configured for it.
+- `src/pages/AgentChatPage.tsx` now prefers the actual default agent (`isDefault`) before falling back to the first agent in the list, keeping chat selection aligned with the rest of the app when multiple agents exist.
+- Reorganized dashboard navigation from 10 flat tabs to a tiered layout for better UX: primary bar shows Dashboard, Agents, Teams, Skills, Inbox, Chat, Board, Settings; secondary "More" dropdown holds Automation and Activity. Mobile bottom bar shows Dashboard, Agents, Teams, Skills with a "More" popup for remaining items (Inbox, Chat, Board, Settings, Automation, Activity). Admin stays in the profile dropdown. All routes unchanged.
+- Board task assignment now supports either a single agent or an agent team. Team-assigned tasks can auto-schedule their lead agent for coordination, while existing single-agent assignment flows stay intact.
+- Agent runtime config loading now merges individual agent skills with shared team skills and injects team context into the system prompt when work is being processed on behalf of a team.
+
 ### Added
 
+- Symphony automation adapter:
+  - Added `run_symphony` as a typed automation action so the control plane can launch repo-aware Symphony bridge runs directly
+  - Added internal automation run completion and failure handlers so Symphony automation runs record structured output and external run IDs in `automationRuns`
+  - Added PRD `prds/symphony-automation-adapter.md` documenting the adapter contract and rollout plan
+- Symphony execution backend foundation:
+  - Added optional `agents.executionBackend` config so each agent can keep Daytona or opt into a Symphony bridge for repo-aware implementation runs
+  - Added `symphony` credential support alongside Daytona in the shared BYOK code execution settings
+  - Updated code execution wrappers to resolve the agent backend and normalize Symphony bridge responses into the existing `{ success, result, error }` contract used by the runtime
+  - Added Settings UI for saving a Symphony bridge token plus base URL and Agents UI for selecting the backend and repo metadata per agent
+  - Added PRD `prds/symphony-execution-backend.md` documenting the bridge-based integration approach and safety constraints
+- Chat-driven agent bootstrap in `/chat`: users with no agents now get an inline guided setup flow that asks a short series of questions with A, B, C, D quick-pick options or custom typed answers, creates the agent through the existing `agents.create` mutation, opens the normal dashboard conversation, and sends the first task into the standard chat runtime.
+- Slash commands in `AgentChatPage`: `/new` starts guided agent creation, `/agent <name>` switches to an existing agent chat, `/help` shows command hints, and `/cancel` exits setup mode without affecting normal message sending.
+- `AgentChatPage` now shows inline agent suggestions while typing `/agent <name>`, so partial commands like `/agent r` surface matching agents such as a research agent before submit.
+- `AgentChatPage` `/agent` suggestions are now keyboard navigable, with arrow keys moving the active match and Enter opening the highlighted agent.
+- PRD `prds/chat-agent-bootstrap.md` documenting the zero-agent chat bootstrap problem, chosen implementation, edge cases, and verification plan.
+- Agent teams: users can now group agents into named teams with a lead agent, member agents, shared skills, and autonomy settings for execution mode, coordination mode, autonomous task creation, email reporting, and thinking mode.
+- `convex/functions/teams.ts`: typed team APIs for list, create, update, delete, member syncing, shared skill syncing, task overview, assignable team lookup, and internal `processTeamTasks` orchestration for auto-mode teams.
+- `src/pages/TeamsPage.tsx`: dedicated team management UI for creating and editing teams, picking a lead agent, toggling autonomy settings, attaching members and shared skills, and deleting teams with the existing confirmation pattern.
+- Team-aware task delegation: lead agents can create subtasks for specific teammates by slug, and delegated tasks persist both `teamId` and `delegatedByAgentId` so collaboration history stays visible in the board model.
+- PRD `prds/agent-teams-autonomy.md` documenting the multi-agent team model, shared-skill behavior, autonomous execution plan, and rollout verification.
 - Automation control plane foundation to centralize trigger and execution orchestration:
   - Added `automationDefinitions` and `automationRuns` tables in `convex/schema.ts` for unified automation config and run history
   - Added `convex/functions/automations.ts` with typed APIs for automation definition CRUD, run history listing, manual run, and event-based definition lookup

@@ -124,6 +124,11 @@ export const CODE_EXECUTION_SERVICES = [
     name: "Daytona",
     description: "Secure code execution sandboxes for Python, JavaScript, bash, and more",
   },
+  {
+    id: "symphony",
+    name: "Symphony",
+    description: "Bridge isolated implementation runs into HumanAgent without replacing the runtime",
+  },
 ] as const;
 
 export type ProviderType = (typeof LLM_PROVIDERS)[number]["id"] | "custom";
@@ -188,6 +193,17 @@ export const platformApi = {
       listPublicByUsername: api.functions.agents.listPublicByUsername,
       getPublicDefaultByUsername: api.functions.agents.getPublicDefaultByUsername,
       getPublicByUsernameAndSlug: api.functions.agents.getPublicByUsernameAndSlug,
+    },
+    teams: {
+      list: api.functions.teams.list,
+      listAssignable: api.functions.teams.listAssignable,
+      create: api.functions.teams.create,
+      update: api.functions.teams.update,
+      setTeamAgents: api.functions.teams.setTeamAgents,
+      setTeamSkills: api.functions.teams.setTeamSkills,
+      remove: api.functions.teams.remove,
+      getTaskOverview: api.functions.teams.getTaskOverview,
+      listTasksForTeam: api.functions.teams.listTasksForTeam,
     },
     skills: {
       list: api.functions.skills.list,

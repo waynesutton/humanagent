@@ -39,6 +39,7 @@ const serviceValidator = v.union(
   v.literal("composio"), // Composio API for 10,000+ SaaS tool integrations
   // Code execution services
   v.literal("daytona"), // Daytona API for secure code execution sandboxes
+  v.literal("symphony"), // Symphony bridge for isolated implementation runs
   v.literal("custom")
 );
 
@@ -247,8 +248,8 @@ export const getLLMProviderStatus = authedQuery({
       };
     }
 
-    // Code execution services (Daytona)
-    const codeExecutionServices = ["daytona"] as const;
+    // Code execution services
+    const codeExecutionServices = ["daytona", "symphony"] as const;
     for (const service of codeExecutionServices) {
       const cred = creds.find((c) => c.service === service);
       status[service] = {

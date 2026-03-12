@@ -5,7 +5,7 @@ import { DashboardLayout } from "../components/layout/DashboardLayout";
 import { Link } from "react-router-dom";
 import type { Id } from "../../convex/_generated/dataModel";
 
-type AutomationTab = "a2a" | "thinking";
+type AutomationTab = "a2a" | "thinking" | "teams";
 type ThoughtType =
   | "observation"
   | "reasoning"
@@ -25,6 +25,16 @@ type ThoughtRow = {
   content: string;
 };
 
+type TeamOverviewRow = {
+  teamId: Id<"agentTeams">;
+  name: string;
+  pending: number;
+  inProgress: number;
+  completed: number;
+  failed: number;
+  executionMode: "manual" | "auto";
+};
+
 export function AutomationPage() {
   const [tab, setTab] = useState<AutomationTab>("a2a");
   const [selectedAgentId, setSelectedAgentId] = useState<Id<"agents"> | null>(null);
@@ -33,6 +43,9 @@ export function AutomationPage() {
   const inboxThreads = useQuery(api.functions.a2a.getInboxThreads, { limit: 20 });
   const outboxThreads = useQuery(api.functions.a2a.getOutboxThreads, { limit: 20 });
   const agents = useQuery(api.functions.agents.list) as AgentRow[] | undefined;
+  const teamOverview = useQuery(api.functions.teams.getTaskOverview) as
+    | TeamOverviewRow[]
+    | undefined;
 
   const effectiveAgentId = useMemo(() => {
     if (selectedAgentId) return selectedAgentId;
@@ -65,7 +78,7 @@ export function AutomationPage() {
 
         <div className="mt-6 card p-0">
           <div className="border-b border-surface-3 p-3">
-            <div className="grid grid-cols-2 gap-2 rounded-lg bg-surface-1 p-1">
+            <div className="grid grid-cols-3 gap-2 rounded-lg bg-surface-1 p-1">
               <button
                 type="button"
                 onClick={() => setTab("a2a")}
@@ -83,6 +96,15 @@ export function AutomationPage() {
                 }`}
               >
                 Thinking
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab("teams")}
+                className={`rounded-md px-3 py-2 text-sm ${
+                  tab === "teams" ? "bg-surface-0 text-ink-0 shadow-card" : "text-ink-1"
+                }`}
+              >
+                Teams
               </button>
             </div>
           </div>
@@ -109,7 +131,7 @@ export function AutomationPage() {
                   </Link>
                 </div>
               </div>
-            ) : (
+            ) : tab === "thinking" ? (
               <div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
@@ -177,6 +199,48 @@ export function AutomationPage() {
                 <Link to="/thinking" className="btn-secondary mt-4 text-sm">
                   Open full thinking view
                 </Link>
+              </div>
+            ) : (
+              <div>
+                {teamOverview === undefined ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-3 border-t-accent" />
+                  </div>
+                ) : teamOverview.length === 0 ? (
+                  <div className="rounded-lg border border-surface-3 bg-surface-1 p-4">
+                    <p className="text-sm text-ink-1">No teams created yet.</p>
+                    <Link to="/teams" className="btn-secondary mt-3 text-sm">
+                      Open teams
+                    </Link>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {teamOverview.map((team) => (
+                      <div
+                        key={team.teamId}
+                        className="rounded-lg border border-surface-3 bg-surface-1 p-4"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <h2 className="font-medium text-ink-0">{team.name}</h2>
+                            <p className="mt-1 text-sm text-ink-1">
+                              Mode: {team.executionMode}
+                            </p>
+                          </div>
+                          <Link to="/teams" className="btn-secondary text-sm">
+                            Manage
+                          </Link>
+                        </div>
+                        <div className="mt-4 grid gap-3 sm:grid-cols-4">
+                          <InfoCard label="Pending" value={team.pending} />
+                          <InfoCard label="In progress" value={team.inProgress} />
+                          <InfoCard label="Completed" value={team.completed} />
+                          <InfoCard label="Failed" value={team.failed} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>

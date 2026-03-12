@@ -48,3 +48,53 @@ export const getDaytonaCredential = internalQuery({
     };
   },
 });
+
+export const getSymphonyCredential = internalQuery({
+  args: {
+    userId: v.id("users"),
+  },
+  handler: async (ctx, { userId }) => {
+    const cred = await ctx.db
+      .query("userCredentials")
+      .withIndex("by_userId_service", (q) =>
+        q.eq("userId", userId).eq("service", "symphony")
+      )
+      .first();
+
+    if (!cred || !cred.isActive || !cred.encryptedApiKey) {
+      return null;
+    }
+
+    return {
+      apiKey: atob(cred.encryptedApiKey),
+      config: cred.config,
+    };
+  },
+});
+
+export const getAgentExecutionBackend = internalQuery({
+  args: {
+    userId: v.id("users"),
+    agentId: v.optional(v.id("agents")),
+  },
+  handler: async (ctx, { userId, agentId }) => {
+    if (!agentId) {
+      return {
+        provider: "daytona" as const,
+      };
+    }
+
+    const agent = await ctx.db.get(agentId);
+    if (!agent || agent.userId !== userId) {
+      return {
+        provider: "daytona" as const,
+      };
+    }
+
+    return (
+      agent.executionBackend ?? {
+        provider: "daytona" as const,
+      }
+    );
+  },
+});

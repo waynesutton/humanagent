@@ -74,7 +74,10 @@ export function LandingPage() {
             <br />
             <span className="text-ink-2">Now you can create one.</span>
           </h1>
-          <p className="mt-6 text-lg text-ink-1 leading-relaxed">
+          <p className="mt-4 text-xl font-medium text-ink-0">
+            Each person gets an operating system for their digital life.
+          </p>
+          <p className="mt-4 text-lg text-ink-1 leading-relaxed">
             Your personal AI agent with a skill file, MCP server, REST API, 
             email inbox, phone number, and public page. Built on Convex for real-time sync.
           </p>

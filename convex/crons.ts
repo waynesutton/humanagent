@@ -489,8 +489,6 @@ crons.interval("agent scheduler", { minutes: 5 }, internal.crons.agentScheduler,
 // Automation Control Plane - Centralized dispatcher
 // ============================================================
 
-const AUTOMATION_DISPATCH_LIMIT = 50;
-
 export const automationControlPlaneTick = internalMutation({
   args: {},
   returns: v.object({
@@ -498,84 +496,8 @@ export const automationControlPlaneTick = internalMutation({
     queued: v.number(),
     failed: v.number(),
   }),
-  handler: async (ctx) => {
-    const now = Date.now();
-    const dueDefinitions = await ctx.db
-      .query("automationDefinitions")
-      .withIndex("by_isActive_and_nextRunAt", (q) =>
-        q.eq("isActive", true).lte("nextRunAt", now)
-      )
-      .take(AUTOMATION_DISPATCH_LIMIT);
-
-    let queued = 0;
-    let failed = 0;
-
-    for (const definition of dueDefinitions) {
-      const runId = await ctx.db.insert("automationRuns", {
-        userId: definition.userId,
-        automationId: definition._id,
-        triggerSource: definition.triggerType === "interval" ? "interval" : "manual",
-        status: "queued",
-        input: {
-          source: "automation_control_plane_tick",
-          actionType: definition.actionType,
-        },
-        createdAt: now,
-        updatedAt: now,
-      });
-
-      try {
-        if (definition.actionType === "process_agent_tasks") {
-          const actionConfig = (definition.actionConfig ?? {}) as {
-            agentId?: Id<"agents">;
-          };
-          if (!actionConfig.agentId) {
-            throw new Error("Missing actionConfig.agentId for process_agent_tasks.");
-          }
-
-          await ctx.scheduler.runAfter(0, internal.crons.processAgentTasks, {
-            userId: definition.userId,
-            agentId: actionConfig.agentId,
-          });
-        }
-
-        queued += 1;
-        await ctx.db.patch(runId, {
-          status: "succeeded",
-          output: { queued: true },
-          endedAt: Date.now(),
-          updatedAt: Date.now(),
-        });
-      } catch (error) {
-        failed += 1;
-        await ctx.db.patch(runId, {
-          status: "failed",
-          error:
-            error instanceof Error
-              ? error.message
-              : "Automation dispatch failed.",
-          endedAt: Date.now(),
-          updatedAt: Date.now(),
-        });
-      }
-
-      const nextRunAt =
-        definition.triggerType === "interval" && definition.intervalMinutes
-          ? now + definition.intervalMinutes * 60 * 1000
-          : undefined;
-
-      await ctx.db.patch(definition._id, {
-        lastRunAt: now,
-        nextRunAt,
-        updatedAt: Date.now(),
-      });
-    }
-
-    return {
-      checked: dueDefinitions.length,
-      queued,
-      failed,
-    };
+  handler: async (ctx): Promise<{ checked: number; queued: number; failed: number }> => {
+    return await ctx.runMutation(internal.functions.automations.dispatchDueAutomations, {});
   },
 });
 

@@ -24,6 +24,7 @@ interface Task {
   status: string;
   boardColumnId?: Id<"boardColumns">;
   agentId?: Id<"agents">;
+  teamId?: Id<"agentTeams">;
   projectId?: Id<"boardProjects">;
   requester?: {
     userId?: Id<"users">;
@@ -65,6 +66,17 @@ interface TaskAttachment {
   url: string | null;
 }
 
+interface TeamOption {
+  _id: Id<"agentTeams">;
+  name: string;
+  leadAgentId: Id<"agents">;
+  leadAgentName?: string;
+  memberCount: number;
+  autonomy: {
+    executionMode: "manual" | "auto";
+  };
+}
+
 
 export function BoardPage() {
   const columns = useQuery(platformApi.convex.board.getColumns);
@@ -72,6 +84,7 @@ export function BoardPage() {
   const tasks = useQuery(platformApi.convex.board.getTasks);
   const archivedTasks = useQuery(platformApi.convex.board.getArchivedTasks);
   const agents = useQuery(platformApi.convex.agents.list);
+  const teams = useQuery(platformApi.convex.teams.listAssignable) as TeamOption[] | undefined;
   const createProject = useMutation(platformApi.convex.board.createProject);
   const deleteProject = useMutation(platformApi.convex.board.deleteProject);
   const createTask = useMutation(platformApi.convex.board.createTask);
@@ -95,6 +108,7 @@ export function BoardPage() {
   const [newTaskText, setNewTaskText] = useState("");
   const [selectedColumn, setSelectedColumn] = useState<Id<"boardColumns"> | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<Id<"agents"> | "none">("none");
+  const [selectedTeam, setSelectedTeam] = useState<Id<"agentTeams"> | "none">("none");
   const [selectedProject, setSelectedProject] = useState<Id<"boardProjects"> | "none">("none");
   const [newTaskIsPublic, setNewTaskIsPublic] = useState(false);
   const [newTaskTargetCompletionAt, setNewTaskTargetCompletionAt] = useState("");
@@ -112,6 +126,7 @@ export function BoardPage() {
   const [editingTask, setEditingTask] = useState<Id<"tasks"> | null>(null);
   const [editDescription, setEditDescription] = useState("");
   const [editAgent, setEditAgent] = useState<Id<"agents"> | "none">("none");
+  const [editTeam, setEditTeam] = useState<Id<"agentTeams"> | "none">("none");
   const [editProject, setEditProject] = useState<Id<"boardProjects"> | "none">("none");
   const [editTargetCompletionAt, setEditTargetCompletionAt] = useState("");
   
@@ -255,19 +270,20 @@ export function BoardPage() {
 
   async function handleCreateTask(e: React.FormEvent) {
     e.preventDefault();
-    if (!newTaskText.trim() || (selectedAgent !== "none" && !selectedColumn)) return;
-    const hasAssignedAgent = selectedAgent !== "none";
+    const hasAssignee = selectedAgent !== "none" || selectedTeam !== "none";
+    if (!newTaskText.trim() || (hasAssignee && !selectedColumn)) return;
     try {
-      if (!hasAssignedAgent) {
+      if (!hasAssignee) {
         notify.warning(
-          "Assign an agent to place task on board",
+          "Assign an agent or team to place task on board",
           "Created as unassigned task."
         );
       }
       await createTask({
         description: newTaskText.trim(),
-        boardColumnId: hasAssignedAgent && selectedColumn ? selectedColumn : undefined,
-        agentId: hasAssignedAgent ? selectedAgent : undefined,
+        boardColumnId: hasAssignee && selectedColumn ? selectedColumn : undefined,
+        agentId: selectedAgent !== "none" ? selectedAgent : undefined,
+        teamId: selectedTeam !== "none" ? selectedTeam : undefined,
         projectId: selectedProject !== "none" ? selectedProject : undefined,
         isPublic: newTaskIsPublic,
         targetCompletionAt: newTaskTargetCompletionAt
@@ -276,6 +292,7 @@ export function BoardPage() {
       });
       setNewTaskText("");
       setSelectedAgent("none");
+      setSelectedTeam("none");
       setSelectedProject("none");
       setNewTaskIsPublic(false);
       setNewTaskTargetCompletionAt("");
@@ -288,7 +305,8 @@ export function BoardPage() {
   function handleTaskComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== "Enter" || !event.shiftKey) return;
     event.preventDefault();
-    if (!newTaskText.trim() || (selectedAgent !== "none" && !selectedColumn)) return;
+    const hasAssignee = selectedAgent !== "none" || selectedTeam !== "none";
+    if (!newTaskText.trim() || (hasAssignee && !selectedColumn)) return;
     event.currentTarget.form?.requestSubmit();
   }
 
@@ -341,6 +359,7 @@ export function BoardPage() {
     setEditingTask(task._id);
     setEditDescription(task.description);
     setEditAgent(task.agentId ?? "none");
+    setEditTeam(task.teamId ?? "none");
     setEditProject(task.projectId ?? "none");
     setEditTargetCompletionAt(
       task.targetCompletionAt
@@ -352,10 +371,10 @@ export function BoardPage() {
   async function handleUpdateTask() {
     if (!editingTask) return;
     const currentTask = tasks?.find((task: Task) => task._id === editingTask);
-    if (editAgent === "none" && currentTask?.boardColumnId) {
+    if (editAgent === "none" && editTeam === "none" && currentTask?.boardColumnId) {
       notify.warning(
         "Cannot remove assignee while task is on board",
-        "Move it to unassigned first or keep an assigned agent."
+        "Move it to unassigned first or keep an assigned agent or team."
       );
       return;
     }
@@ -364,6 +383,7 @@ export function BoardPage() {
         taskId: editingTask,
         description: editDescription.trim() || undefined,
         agentId: editAgent !== "none" ? editAgent : null,
+        teamId: editTeam !== "none" ? editTeam : null,
         projectId: editProject !== "none" ? editProject : undefined,
         targetCompletionAt: editTargetCompletionAt
           ? new Date(editTargetCompletionAt).getTime()
@@ -519,10 +539,10 @@ export function BoardPage() {
   async function handleDrop(columnId: Id<"boardColumns">) {
     if (!draggingTask) return;
     const task = tasks?.find((t: Task) => t._id === draggingTask);
-    if (task && !task.agentId) {
+    if (task && !task.agentId && !task.teamId) {
       notify.warning(
         "Unassigned tasks cannot be moved to board columns",
-        "Assign an agent first."
+        "Assign an agent or team first."
       );
       setDraggingTask(null);
       return;
@@ -578,6 +598,16 @@ export function BoardPage() {
     if (!agentId || !agents) return null;
     const agent = agents.find((a: Agent) => a._id === agentId);
     return agent?.name ?? null;
+  }
+
+  function getTeamName(teamId: Id<"agentTeams"> | undefined): string | null {
+    if (!teamId || !teams) return null;
+    const team = teams.find((row) => row._id === teamId);
+    return team?.name ?? null;
+  }
+
+  function getAssigneeLabel(task: Task): string | null {
+    return getAgentName(task.agentId) ?? getTeamName(task.teamId);
   }
 
   function getProjectName(projectId: Id<"boardProjects"> | undefined): string | null {
@@ -717,7 +747,7 @@ export function BoardPage() {
       .sort((a, b) => b.taskCount - a.taskCount);
   })();
 
-  if (!columns || !tasks || !projects || !agents || archivedTasks === undefined) {
+  if (!columns || !tasks || !projects || !agents || !teams || archivedTasks === undefined) {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center py-20">
@@ -922,12 +952,34 @@ export function BoardPage() {
                   </select>
                   <select
                     value={selectedAgent}
-                    onChange={(e) => setSelectedAgent(e.target.value as Id<"agents"> | "none")}
+                    onChange={(e) => {
+                      const value = e.target.value as Id<"agents"> | "none";
+                      setSelectedAgent(value);
+                      if (value !== "none") {
+                        setSelectedTeam("none");
+                      }
+                    }}
                     className="cursor-pointer rounded-full border border-surface-3 bg-surface-1 px-3 py-1 text-xs text-ink-1 outline-none hover:bg-surface-2"
                   >
                     <option value="none">No agent</option>
                     {agents.map((agent: Agent) => (
                       <option key={agent._id} value={agent._id}>{agent.name}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={selectedTeam}
+                    onChange={(e) => {
+                      const value = e.target.value as Id<"agentTeams"> | "none";
+                      setSelectedTeam(value);
+                      if (value !== "none") {
+                        setSelectedAgent("none");
+                      }
+                    }}
+                    className="cursor-pointer rounded-full border border-surface-3 bg-surface-1 px-3 py-1 text-xs text-ink-1 outline-none hover:bg-surface-2"
+                  >
+                    <option value="none">No team</option>
+                    {teams.map((team) => (
+                      <option key={team._id} value={team._id}>{team.name}</option>
                     ))}
                   </select>
                   <select
@@ -957,7 +1009,10 @@ export function BoardPage() {
                   </label>
                   <button
                     type="submit"
-                    disabled={!newTaskText.trim() || (selectedAgent !== "none" && !selectedColumn)}
+                    disabled={
+                      !newTaskText.trim() ||
+                      ((selectedAgent !== "none" || selectedTeam !== "none") && !selectedColumn)
+                    }
                     className="ml-auto rounded-full bg-accent px-4 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40"
                   >
                     Add
@@ -1000,12 +1055,37 @@ export function BoardPage() {
                   <label className="block text-sm font-medium text-ink-0">Assigned agent</label>
                   <select
                     value={editAgent}
-                    onChange={(e) => setEditAgent(e.target.value as Id<"agents"> | "none")}
+                    onChange={(e) => {
+                      const value = e.target.value as Id<"agents"> | "none";
+                      setEditAgent(value);
+                      if (value !== "none") {
+                        setEditTeam("none");
+                      }
+                    }}
                     className="input mt-1.5"
                   >
                     <option value="none">No agent</option>
                     {agents.map((agent: Agent) => (
                       <option key={agent._id} value={agent._id}>{agent.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-ink-0">Assigned team</label>
+                  <select
+                    value={editTeam}
+                    onChange={(e) => {
+                      const value = e.target.value as Id<"agentTeams"> | "none";
+                      setEditTeam(value);
+                      if (value !== "none") {
+                        setEditAgent("none");
+                      }
+                    }}
+                    className="input mt-1.5"
+                  >
+                    <option value="none">No team</option>
+                    {teams.map((team) => (
+                      <option key={team._id} value={team._id}>{team.name}</option>
                     ))}
                   </select>
                 </div>
@@ -1053,6 +1133,11 @@ export function BoardPage() {
                     {getAgentName(detailTask.agentId) && (
                       <span className="rounded-full bg-accent/10 px-2 py-0.5 text-xs text-accent">
                         {getAgentName(detailTask.agentId)}
+                      </span>
+                    )}
+                    {getTeamName(detailTask.teamId) && (
+                      <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs text-ink-1">
+                        Team: {getTeamName(detailTask.teamId)}
                       </span>
                     )}
                     {getProjectName(detailTask.projectId) && (
@@ -1400,7 +1485,7 @@ export function BoardPage() {
                         <TaskCard
                           key={task._id}
                           task={task}
-                          agentName={getAgentName(task.agentId)}
+                          agentName={getAssigneeLabel(task)}
                           projectName={getProjectName(task.projectId)}
                           subtaskCount={getSubtaskCount(task._id)}
                           onDragStart={() => handleDragStart(task._id)}
@@ -1500,7 +1585,7 @@ export function BoardPage() {
                 <TaskCard
                   key={task._id}
                   task={task}
-                  agentName={getAgentName(task.agentId)}
+                  agentName={getAssigneeLabel(task)}
                   projectName={getProjectName(task.projectId)}
                   subtaskCount={getSubtaskCount(task._id)}
                   onDragStart={() => handleDragStart(task._id)}
@@ -1561,7 +1646,7 @@ export function BoardPage() {
                     <ArchivedTaskCard
                       key={task._id}
                       task={task}
-                      agentName={getAgentName(task.agentId)}
+                      agentName={getAssigneeLabel(task)}
                       projectName={getProjectName(task.projectId)}
                       onOpenDetails={() => setDetailsTaskId(task._id)}
                       onRestore={() => handleUnarchiveTask(task._id)}

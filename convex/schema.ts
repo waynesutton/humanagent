@@ -181,6 +181,16 @@ export default defineSchema({
         browserUseEnabled: v.boolean(), // Browser Use for task automation
       })
     ),
+    // Code execution backend selection for isolated implementation runs
+    executionBackend: v.optional(
+      v.object({
+        provider: v.union(v.literal("daytona"), v.literal("symphony")),
+        repoUrl: v.optional(v.string()),
+        baseBranch: v.optional(v.string()),
+        projectPath: v.optional(v.string()),
+        promptPrefix: v.optional(v.string()),
+      })
+    ),
     // Supermemory configuration for personalized context
     supermemoryConfig: v.optional(
       v.object({
@@ -290,6 +300,7 @@ export default defineSchema({
       v.literal("composio"), // Composio API for 10,000+ SaaS tool integrations
       // Code execution services
       v.literal("daytona"), // Daytona API for secure code execution sandboxes
+      v.literal("symphony"), // Symphony bridge for isolated implementation runs
       v.literal("custom")
     ),
     // Encrypted API key (never stored in plaintext)
@@ -369,6 +380,52 @@ export default defineSchema({
     .index("by_agentId", ["agentId"])
     .index("by_userId", ["userId"])
     .index("by_skillId_agentId", ["skillId", "agentId"]),
+
+  // Agent teams: reusable groups of agents inside one user's workspace.
+  agentTeams: defineTable({
+    userId: v.id("users"),
+    name: v.string(),
+    slug: v.string(),
+    description: v.optional(v.string()),
+    leadAgentId: v.id("agents"),
+    autonomy: v.object({
+      executionMode: v.union(v.literal("manual"), v.literal("auto")),
+      coordinationMode: v.union(v.literal("lead_only"), v.literal("collaborative")),
+      allowAutonomousTaskCreation: v.boolean(),
+      allowEmailReports: v.boolean(),
+      thinkingEnabled: v.boolean(),
+    }),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_slug", ["userId", "slug"])
+    .index("by_leadAgentId", ["leadAgentId"]),
+
+  // Junction table: many-to-many link between teams and agents.
+  agentTeamMembers: defineTable({
+    teamId: v.id("agentTeams"),
+    agentId: v.id("agents"),
+    userId: v.id("users"),
+    role: v.union(v.literal("lead"), v.literal("member")),
+    createdAt: v.number(),
+  })
+    .index("by_teamId", ["teamId"])
+    .index("by_agentId", ["agentId"])
+    .index("by_userId", ["userId"])
+    .index("by_teamId_agentId", ["teamId", "agentId"]),
+
+  // Junction table: shared skills that apply across a team.
+  teamSkills: defineTable({
+    teamId: v.id("agentTeams"),
+    skillId: v.id("skills"),
+    userId: v.id("users"),
+    createdAt: v.number(),
+  })
+    .index("by_teamId", ["teamId"])
+    .index("by_skillId", ["skillId"])
+    .index("by_userId", ["userId"])
+    .index("by_teamId_skillId", ["teamId", "skillId"]),
 
   // API keys (SHA-256 hashed, never stored plaintext)
   apiKeys: defineTable({
@@ -513,9 +570,11 @@ export default defineSchema({
   tasks: defineTable({
     userId: v.id("users"),
     agentId: v.optional(v.id("agents")), // Which agent is assigned to this task
+    teamId: v.optional(v.id("agentTeams")), // Which team is assigned to this task
     projectId: v.optional(v.id("boardProjects")), // Optional project grouping
     requesterUserId: v.optional(v.id("users")), // Cross-user task requester
     requesterAgentId: v.optional(v.id("agents")), // Requester's agent
+    delegatedByAgentId: v.optional(v.id("agents")), // Coordinator agent that delegated this work
     requestedBy: v.string(),
     description: v.string(),
     status: v.union(
@@ -581,7 +640,9 @@ export default defineSchema({
   })
     .index("by_userId", ["userId"])
     .index("by_agentId", ["agentId"])
+    .index("by_teamId", ["teamId"])
     .index("by_userId_projectId", ["userId", "projectId"])
+    .index("by_userId_teamId", ["userId", "teamId"])
     .index("by_userId_status", ["userId", "status"])
     .index("by_userId_archived", ["userId", "isArchived"])
     .index("by_parentTaskId", ["parentTaskId"]),
@@ -914,7 +975,7 @@ export default defineSchema({
     // Event trigger config
     eventType: v.optional(v.string()),
     // Action adapter to execute existing primitives
-    actionType: v.union(v.literal("process_agent_tasks")),
+    actionType: v.union(v.literal("process_agent_tasks"), v.literal("run_symphony")),
     actionConfig: v.optional(v.any()),
     isActive: v.boolean(),
     lastRunAt: v.optional(v.number()),

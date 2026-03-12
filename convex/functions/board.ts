@@ -373,6 +373,7 @@ export const createTask = authedMutation({
     description: v.string(),
     boardColumnId: v.optional(v.id("boardColumns")),
     agentId: v.optional(v.id("agents")),
+    teamId: v.optional(v.id("agentTeams")),
     projectId: v.optional(v.id("boardProjects")),
     isPublic: v.optional(v.boolean()),
     targetCompletionAt: v.optional(v.number()),
@@ -380,6 +381,18 @@ export const createTask = authedMutation({
   returns: v.id("tasks"),
   handler: async (ctx, args) => {
     let agentName: string | undefined;
+    let team:
+      | {
+          _id: Id<"agentTeams">;
+          name: string;
+          userId: Id<"users">;
+          autonomy: { executionMode: "manual" | "auto" };
+        }
+      | null = null;
+
+    if (args.agentId && args.teamId) {
+      throw new Error("Assign a task to either an agent or a team");
+    }
 
     // If agentId provided, verify ownership
     if (args.agentId) {
@@ -388,6 +401,13 @@ export const createTask = authedMutation({
         throw new Error("Agent not found");
       }
       agentName = agent.name;
+    }
+
+    if (args.teamId) {
+      team = await ctx.db.get(args.teamId);
+      if (!team || team.userId !== ctx.userId) {
+        throw new Error("Team not found");
+      }
     }
 
     if (args.projectId) {
@@ -408,6 +428,7 @@ export const createTask = authedMutation({
     const taskId = await ctx.db.insert("tasks", {
       userId: ctx.userId,
       agentId: args.agentId,
+      teamId: args.teamId,
       projectId: args.projectId,
       requestedBy: "user",
       description: trimmedDescription,
@@ -422,11 +443,16 @@ export const createTask = authedMutation({
     await ctx.runMutation(internal.functions.feed.maybeCreateItem, {
       userId: ctx.userId,
       type: "status_update",
-      title: agentName ? `${agentName} received a new task` : "New task created",
+      title: agentName
+        ? `${agentName} received a new task`
+        : team
+          ? `${team.name} received a new team task`
+          : "New task created",
       content: trimmedDescription.slice(0, 140),
       metadata: {
         taskId,
         agentId: args.agentId,
+        teamId: args.teamId,
         projectId: args.projectId,
       },
       isPublic,
@@ -437,6 +463,12 @@ export const createTask = authedMutation({
       await ctx.scheduler.runAfter(0, internal.crons.processAgentTasks, {
         userId: ctx.userId,
         agentId: args.agentId,
+      });
+    }
+    if (team?.autonomy.executionMode === "auto") {
+      await ctx.scheduler.runAfter(0, internal.functions.teams.processTeamTasks, {
+        userId: ctx.userId,
+        teamId: team._id,
       });
     }
 
@@ -743,6 +775,7 @@ export const updateTask = authedMutation({
     taskId: v.id("tasks"),
     description: v.optional(v.string()),
     agentId: v.optional(v.union(v.id("agents"), v.null())),
+    teamId: v.optional(v.union(v.id("agentTeams"), v.null())),
     projectId: v.optional(v.union(v.id("boardProjects"), v.null())),
     targetCompletionAt: v.optional(v.union(v.number(), v.null())),
     outcomeSummary: v.optional(v.union(v.string(), v.null())),
@@ -752,12 +785,29 @@ export const updateTask = authedMutation({
   handler: async (ctx, args) => {
     const task = await ctx.db.get(args.taskId);
     if (!task || task.userId !== ctx.userId) throw new Error("Task not found");
+    if (args.agentId && args.teamId) {
+      throw new Error("Assign a task to either an agent or a team");
+    }
 
     // If assigning to an agent, verify ownership
     if (args.agentId) {
       const agent = await ctx.db.get(args.agentId);
       if (!agent || agent.userId !== ctx.userId) {
         throw new Error("Agent not found");
+      }
+    }
+
+    let updatedTeam:
+      | {
+          _id: Id<"agentTeams">;
+          userId: Id<"users">;
+          autonomy: { executionMode: "manual" | "auto" };
+        }
+      | null = null;
+    if (args.teamId) {
+      updatedTeam = await ctx.db.get(args.teamId);
+      if (!updatedTeam || updatedTeam.userId !== ctx.userId) {
+        throw new Error("Team not found");
       }
     }
 
@@ -771,6 +821,7 @@ export const updateTask = authedMutation({
     const patch: Record<string, unknown> = {};
     if (args.description !== undefined) patch.description = args.description;
     if (args.agentId !== undefined) patch.agentId = args.agentId ?? undefined;
+    if (args.teamId !== undefined) patch.teamId = args.teamId ?? undefined;
     if (args.projectId !== undefined) patch.projectId = args.projectId ?? undefined;
     if (args.targetCompletionAt !== undefined) {
       patch.targetCompletionAt =
@@ -790,6 +841,18 @@ export const updateTask = authedMutation({
 
     if (Object.keys(patch).length > 0) {
       await ctx.db.patch(args.taskId, patch);
+    }
+
+    if (args.agentId) {
+      await ctx.scheduler.runAfter(0, internal.crons.processAgentTasks, {
+        userId: ctx.userId,
+        agentId: args.agentId,
+      });
+    } else if (updatedTeam?.autonomy.executionMode === "auto") {
+      await ctx.scheduler.runAfter(0, internal.functions.teams.processTeamTasks, {
+        userId: ctx.userId,
+        teamId: updatedTeam._id,
+      });
     }
 
     const hasOutcomeUpdate =
@@ -875,6 +938,14 @@ export const doNow = authedMutation({
         userId: ctx.userId,
         agentId: task.agentId,
       });
+    } else if (task.teamId) {
+      const team = await ctx.db.get(task.teamId);
+      if (team?.userId === ctx.userId && team.autonomy.executionMode === "auto") {
+        await ctx.scheduler.runAfter(0, internal.functions.teams.processTeamTasks, {
+          userId: ctx.userId,
+          teamId: task.teamId,
+        });
+      }
     }
 
     return null;
@@ -1083,6 +1154,7 @@ export const createTaskFromAgent = internalMutation({
   args: {
     userId: v.id("users"),
     agentId: v.optional(v.id("agents")),
+    teamId: v.optional(v.id("agentTeams")),
     description: v.string(),
     isPublic: v.boolean(),
     source: v.union(
@@ -1095,6 +1167,7 @@ export const createTaskFromAgent = internalMutation({
       v.literal("dashboard")
     ),
     parentTaskId: v.optional(v.id("tasks")),
+    delegatedByAgentId: v.optional(v.id("agents")),
   },
   returns: v.id("tasks"),
   handler: async (ctx, args) => {
@@ -1112,10 +1185,18 @@ export const createTaskFromAgent = internalMutation({
       resolvedAgentName = agent.name;
     }
 
+    if (args.teamId) {
+      const team = await ctx.db.get(args.teamId);
+      if (!team || team.userId !== args.userId) {
+        throw new Error("Team not found for user");
+      }
+    }
+
     const inboxColumnId = await getOrCreateInboxColumnId(ctx, args.userId);
     const taskId = await ctx.db.insert("tasks", {
       userId: args.userId,
       agentId: args.agentId,
+      teamId: args.teamId,
       requestedBy: args.parentTaskId ? "subtask" : "chat",
       description,
       status: "pending",
@@ -1123,6 +1204,7 @@ export const createTaskFromAgent = internalMutation({
       boardColumnId: inboxColumnId,
       isPublic: args.isPublic,
       parentTaskId: args.parentTaskId,
+      delegatedByAgentId: args.delegatedByAgentId,
       createdAt: Date.now(),
     });
 
@@ -1139,8 +1221,10 @@ export const createTaskFromAgent = internalMutation({
       metadata: {
         taskId,
         agentId: args.agentId,
+          teamId: args.teamId,
         source: args.source,
         parentTaskId: args.parentTaskId,
+          delegatedByAgentId: args.delegatedByAgentId,
       },
       isPublic: args.isPublic,
     });

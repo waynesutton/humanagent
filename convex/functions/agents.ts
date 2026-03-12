@@ -255,6 +255,16 @@ export const update = authedMutation({
         browserUseEnabled: v.boolean(),
       })
     ),
+    // Code execution backend settings
+    executionBackend: v.optional(
+      v.object({
+        provider: v.union(v.literal("daytona"), v.literal("symphony")),
+        repoUrl: v.optional(v.string()),
+        baseBranch: v.optional(v.string()),
+        projectPath: v.optional(v.string()),
+        promptPrefix: v.optional(v.string()),
+      })
+    ),
     // X/Twitter integration settings
     xConfig: v.optional(
       v.object({
@@ -336,6 +346,7 @@ export const update = authedMutation({
     }
     if (args.thinking !== undefined) patch.thinking = args.thinking;
     if (args.browserAutomation !== undefined) patch.browserAutomation = args.browserAutomation;
+    if (args.executionBackend !== undefined) patch.executionBackend = args.executionBackend;
     if (args.a2aConfig !== undefined) patch.a2aConfig = args.a2aConfig;
     if (args.supermemoryConfig !== undefined) patch.supermemoryConfig = args.supermemoryConfig;
     if (args.xConfig !== undefined) {

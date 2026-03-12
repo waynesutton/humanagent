@@ -45,6 +45,7 @@ import type * as functions_security from "../functions/security.js";
 import type * as functions_skills from "../functions/skills.js";
 import type * as functions_supermemory from "../functions/supermemory.js";
 import type * as functions_supermemoryQueries from "../functions/supermemoryQueries.js";
+import type * as functions_teams from "../functions/teams.js";
 import type * as functions_userSchedules from "../functions/userSchedules.js";
 import type * as functions_users from "../functions/users.js";
 import type * as functions_voice from "../functions/voice.js";
@@ -99,6 +100,7 @@ declare const fullApi: ApiFromModules<{
   "functions/skills": typeof functions_skills;
   "functions/supermemory": typeof functions_supermemory;
   "functions/supermemoryQueries": typeof functions_supermemoryQueries;
+  "functions/teams": typeof functions_teams;
   "functions/userSchedules": typeof functions_userSchedules;
   "functions/users": typeof functions_users;
   "functions/voice": typeof functions_voice;

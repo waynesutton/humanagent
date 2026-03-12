@@ -37,6 +37,7 @@ const BoardPage = lazyNamed(() => import("./pages/BoardPage"), "BoardPage");
 const FeedPage = lazyNamed(() => import("./pages/FeedPage"), "FeedPage");
 const SettingsPage = lazyNamed(() => import("./pages/SettingsPage"), "SettingsPage");
 const AgentsPage = lazyNamed(() => import("./pages/AgentsPage"), "AgentsPage");
+const TeamsPage = lazyNamed(() => import("./pages/TeamsPage"), "TeamsPage");
 const InboxPage = lazyNamed(() => import("./pages/InboxPage"), "InboxPage");
 const AgentChatPage = lazyNamed(() => import("./pages/AgentChatPage"), "AgentChatPage");
 const A2AInboxPage = lazyNamed(() => import("./pages/A2AInboxPage"), "A2AInboxPage");
@@ -227,6 +228,15 @@ export default function App() {
           element={
             <AuthRequired>
               <AgentsPage />
+            </AuthRequired>
+          }
+        />
+
+        <Route
+          path="/teams"
+          element={
+            <AuthRequired>
+              <TeamsPage />
             </AuthRequired>
           }
         />
